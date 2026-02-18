@@ -28,47 +28,20 @@ public sealed class TrayService : ITrayService, IDisposable
         _trayIcon = new TrayIconWithContextMenu
         {
             ToolTip = "BTSS Kiosk Controller",
-            Icon = icon.Handle
+            Icon = icon.Handle,
+            ContextMenu = new PopupMenu
+            {
+                Items =
+                {
+                    new PopupMenuItem("Show Admin", (_, __) => ShowAdmin()),
+                    new PopupMenuItem("Hide Admin", (_, __) => HideAdmin()),
+                    new PopupMenuSeparator(),
+                    new PopupMenuItem("Exit", (_, __) => ExitApp()),
+                }
+            }
         };
 
-        _trayIcon.ContextMenu = new PopupMenu
-        {
-            Items =
-            {
-                new PopupMenuItem("Create Second", (_, _) => CreateSecond()),
-                new PopupMenuSeparator(),
-                new PopupMenuItem("Show Message", (_, _) => ShowMessage(trayIcon, "message")),
-                new PopupMenuItem("Show Info", (_, _) => ShowInfo(trayIcon, "info")),
-                new PopupMenuItem("Show Warning", (_, _) => ShowWarning(trayIcon, "warning")),
-                new PopupMenuItem("Show Error", (_, _) => ShowError(trayIcon, "error")),
-                new PopupMenuItem("Show Custom", (_, _) => ShowCustom(trayIcon, "custom", icon)),
-                new PopupMenuSeparator(),
-                new PopupSubMenu("SubMenu")
-                {
-                    Items =
-                    {
-                        new PopupMenuItem("Item 1", (_, _) => ShowMessage(trayIcon, "Item 1")),
-                        new PopupSubMenu("SubMenu 2")
-                        {
-                            Items =
-                            {
-                                new PopupMenuItem("Item 2", (_, _) => ShowMessage(trayIcon, "Item 2")),
-                            }
-                        }
-                    }
-                },
-                new PopupMenuSeparator(),
-                new PopupMenuItem("Remove", (_, _) => Remove(trayIcon)),
-                new PopupMenuItem("Hide", (_, _) => Hide(trayIcon)),
-                new PopupMenuSeparator(),
-                new PopupMenuItem("Exit", (_, _) =>
-                {
-                    trayIcon.Dispose();
-                    Environment.Exit(0);
-                }),
-            },
-        };
-        trayIcon.Create();
+        _trayIcon.Create();
     }
 
     public void ShowAdmin()
