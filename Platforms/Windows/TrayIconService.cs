@@ -1,136 +1,75 @@
 #if WINDOWS
-using Microsoft.Maui.Platform;
-using Microsoft.UI;
-using Microsoft.UI.Windowing;
-using System.Windows.Forms;
-using WinRT.Interop;
-using Application = Microsoft.Maui.Controls.Application;
-
+using System;
+using Microsoft.Maui.Dispatching;
+using H.NotifyIcon;
+using H.NotifyIcon.Core;
 
 namespace BTSS.IAR.Kiosk.Platforms.Windows;
 
-public interface ITrayIconService : IDisposable
+public interface ITrayService
 {
-    void Initialize(IntPtr hwnd);
-    void HideAdmin();
+    void Initialize(nint hwnd);
     void ShowAdmin();
-    void Dispose();
-    void Quit();
-    bool IsInitialized { get; }
+    void HideAdmin();
+    void ExitApp();
 }
 
-/// <summary>
-/// System tray icon + context menu. On window close, hides to tray.
-/// Quit is only supported exit.
-/// </summary>
-public sealed class TrayIconService : ITrayIconService
+public sealed class TrayService : ITrayService, IDisposable
 {
-    private NotifyIcon? _notify;
-    private AppWindow? _appWindow;
-    private Window? _mauiWindow;
-    private bool _quitting;
+    private TrayIcon? _trayIcon;
 
-    public bool IsInitialized => _notify != null;
-    public bool IsQuitting => _quitting;
-
-    public void Initialize(IntPtr hwnd)
+    public void Initialize(nint hwnd)
     {
-        if (_notify != null) return;
+        if (_trayIcon != null) return;
 
-        //_mauiWindow = mainMauiWindow;
-
-        //if (mainMauiWindow.Handler?.PlatformView is not MauiWinUIWindow winuiWindow)
-        //    return;
-
-        //var hwnd = WindowNative.GetWindowHandle(winuiWindow);
-        var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
-
-        _appWindow = AppWindow.GetFromWindowId(windowId);
-
-        _appWindow.Closing += (_, e) =>
+        _trayIcon = new TrayIcon
         {
-            if (_quitting) return;
-            e.Cancel = true;
-            HideAdmin();
+            ToolTipText = "BTSS Kiosk Controller",
+            // Icon = ... set from embedded resource / file
         };
 
-        _notify = new NotifyIcon
-        {
-            Text = "BTSS IAR Kiosk",
-            Visible = true,
-            Icon = System.Drawing.SystemIcons.Application,
-            ContextMenuStrip = BuildMenu()
-        };
+        var menu = new PopupMenu();
+        menu.Items.Add(new PopupMenuItem("Show Admin", (_, __) => ShowAdmin()));
+        menu.Items.Add(new PopupMenuItem("Hide Admin", (_, __) => HideAdmin()));
+        menu.Items.Add(new PopupMenuItemSeparator());
+        menu.Items.Add(new PopupMenuItem("Exit", (_, __) => ExitApp()));
+        _trayIcon.ContextMenu = menu;
 
-        _notify.DoubleClick += (_, _) => ShowAdmin();
-    }
+        _trayIcon.LeftClickCommand = new RelayCommand(_ => ShowAdmin());
 
-    private ContextMenuStrip BuildMenu()
-    {
-        var menu = new ContextMenuStrip();
-
-        var showAdmin = new ToolStripMenuItem("Show Admin");
-        showAdmin.Click += (_, _) => ShowAdmin();
-
-        var startDisplay = new ToolStripMenuItem("Start display");
-        startDisplay.Click += async (_, _) =>
-        {
-            if (Application.Current is BTSS.IAR.Kiosk.App app)
-                await app.TryStartDisplayFromSavedAsync(showAdminIfMissingConfig: true);
-        };
-
-        var stopDisplay = new ToolStripMenuItem("Stop display");
-        stopDisplay.Click += (_, _) =>
-        {
-            if (Application.Current is BTSS.IAR.Kiosk.App app)
-                app.StopDisplayWindow();
-        };
-
-        var quit = new ToolStripMenuItem("Quit");
-        quit.Click += (_, _) => Quit();
-
-        menu.Items.Add(showAdmin);
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(startDisplay);
-        menu.Items.Add(stopDisplay);
-        menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add(quit);
-
-        return menu;
+        _trayIcon.ForceCreate(); // ensures it shows up
     }
 
     public void ShowAdmin()
     {
-        if (_appWindow == null) return;
-        _appWindow.Show();
-        // Activate window
-        if (_mauiWindow?.Handler?.PlatformView is MauiWinUIWindow winuiWindow)
-            winuiWindow.Activate();
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            // TODO: restore/activate your Admin window
+            // e.g. bring MainPage/AdminPage window to front
+        });
     }
 
     public void HideAdmin()
     {
-        if (_appWindow == null) return;
-        _appWindow.Hide();
+        MainThread.BeginInvokeOnMainThread(() =>
+        {
+            // TODO: hide/minimize your Admin window
+        });
     }
 
-    public void Quit()
+    public void ExitApp()
     {
-        _quitting = true;
-        try
+        MainThread.BeginInvokeOnMainThread(() =>
         {
-            _notify?.Dispose();
-        }
-        catch { }
-
-        // Ensure process exits even if other windows veto closing.
-        Environment.Exit(0);
+            // graceful shutdown
+            Environment.Exit(0);
+        });
     }
 
     public void Dispose()
     {
-        try { _notify?.Dispose(); } catch { }
-        _notify = null;
+        _trayIcon?.Dispose();
+        _trayIcon = null;
     }
 }
 #endif
