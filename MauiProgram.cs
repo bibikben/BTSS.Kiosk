@@ -95,11 +95,7 @@ namespace BTSS.IAR.Kiosk
                                 await kioskApp.TryStartDisplayFromSavedAsync(showAdminIfMissingConfig: true);
                         });
                     }
-                    var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
-                    var appWindow = AppWindow.GetFromWindowId(windowId);
 
-                    // This path is relative to the app's current working/output directory
-                    appWindow.SetIcon(@"Resources\AppIcon\Btss.ico");
                 });
             });
         });

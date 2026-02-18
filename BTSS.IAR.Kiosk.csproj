@@ -11,7 +11,7 @@
 		The Mac App Store will NOT accept apps with ONLY maccatalyst-arm64 indicated;
 		either BOTH runtimes must be indicated or ONLY macatalyst-x64. -->
 		<!-- For example: <RuntimeIdentifiers>maccatalyst-x64;maccatalyst-arm64</RuntimeIdentifiers> -->
-		<OutputType>Exe</OutputType>
+		<OutputType>WinExe</OutputType>
 		<RootNamespace>BTSS.IAR.Kiosk</RootNamespace>
 		<UseMaui>true</UseMaui>
 		<SingleProject>true</SingleProject>
@@ -29,22 +29,13 @@
 		<ApplicationVersion>1</ApplicationVersion>
 
 		<!-- To develop, package, and publish an app to the Microsoft Store, see: https://aka.ms/MauiTemplateUnpackaged -->
-		<WindowsPackageType>MSIX</WindowsPackageType>
+		<WindowsPackageType>None</WindowsPackageType>
 
 		<SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
 		<TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
-		<CreateMSIXPackage>True</CreateMSIXPackage>
+		<CreateMSIXPackage>False</CreateMSIXPackage>
 		<AssemblyTitle>Kiosk Window Controller</AssemblyTitle>
 		<AssemblyName>BTSS Kiosk Controller</AssemblyName>
-	</PropertyGroup>
-
-	<PropertyGroup Condition="'$(TargetFramework)'=='net10.0-windows10.0.19041.0'">
-		<!-- Keep WinForms for NotifyIcon -->
-		<UseWindowsForms>true</UseWindowsForms>
-
-		<!-- Prevent WindowsDesktop/WPF from treating *.xaml as WPF Page/ApplicationDefinition -->
-		<EnableDefaultPageItems>false</EnableDefaultPageItems>
-		<EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
 	</PropertyGroup>
 
 	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|net10.0-windows10.0.19041.0|AnyCPU'">
@@ -59,15 +50,9 @@
 		<ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
 	</PropertyGroup>
 
-	<ItemGroup Condition="'$(TargetFramework)'=='net10.0-windows10.0.19041.0'">
-		<!-- Extra safety: remove any accidental WPF XAML itemization -->
-		<Page Remove="**\*.xaml" />
-		<ApplicationDefinition Remove="**\*.xaml" />
-	</ItemGroup>
-
 	<ItemGroup>
 		<!-- App Icon -->
-		<MauiIcon Include="Resources\AppIcon\btss.ico" ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#512BD4" />
+		<MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#512BD4" />
 
 		<!-- Splash Screen -->
 		<MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#512BD4" BaseSize="128,128" />
@@ -87,9 +72,7 @@
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</Content>
 	</ItemGroup>
-	<ItemGroup>
-		<MauiXaml Remove="Platforms\Windows\App.xaml" />
-	</ItemGroup>
+
 	<ItemGroup>
 		<EmbeddedResource Include="Resources\AppIcon\Btss.ico" />
 	</ItemGroup>
@@ -100,6 +83,7 @@
 		<PackageReference Include="Microsoft.Maui.Core" Version="10.0.40" />
 		<PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3800.47" />
 		<PackageReference Include="sqlite-net-pcl" Version="1.9.172" />
+		<PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.3" />
 		<PackageReference Include="System.Drawing.Common" Version="10.0.3" />
 		<PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.3" />
 	</ItemGroup>
@@ -108,16 +92,7 @@
   <PackageReference Include="H.NotifyIcon.Maui" Version="2.4.1" />
 </ItemGroup>		
 	
-	
-	<ItemGroup>
-		<!-- Ensure Windows App.xaml is treated as WinUI Page, not WPF ApplicationDefinition -->
-		<Page Remove="Platforms\Windows\App.xaml" />
-		<ApplicationDefinition Remove="Platforms\Windows\App.xaml" />
-		<Page Include="Platforms\Windows\App.xaml" />
-	</ItemGroup>
-	<ItemGroup>
-		<Page Include="Platforms\Windows\App.xaml" />
-	</ItemGroup>
+
 	<ItemGroup>
 		<Compile Update="DisplayPage.xaml.cs">
 			<DependentUpon>DisplayPage.xaml</DependentUpon>

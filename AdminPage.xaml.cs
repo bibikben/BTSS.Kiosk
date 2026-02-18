@@ -169,6 +169,7 @@ public partial class AdminPage : ContentPage
             username: UserEntry.Text ?? "",
             password: PassEntry.Text ?? "",
             monitorIndex: MonitorPicker.SelectedIndex);;
+        _emailChecker.Start();
 #endif
     }
 

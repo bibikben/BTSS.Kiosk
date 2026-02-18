@@ -1,6 +1,6 @@
 ﻿using BTSS.IAR.Kiosk.Services;
 using BTSS.IAR.Kiosk.Services.DispatchEmail;
-using Application = Microsoft.Maui.Controls.Application;
+//using Application = Microsoft.Maui.Controls.Application;
 #if WINDOWS
 using BTSS.IAR.Kiosk.Platforms.Windows;
 #endif
@@ -10,7 +10,6 @@ public partial class App : Application
 {
     public Window? DisplayWindow { get; private set; }
 
-    [Obsolete("Obsolete")]
     public App(IEmailCheckerService emailChecker)
     {
         InitializeComponent();
