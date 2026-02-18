@@ -6,6 +6,8 @@ using Microsoft.Maui.Controls;
 using BTSS.IAR.Kiosk.Services.DispatchEmail;
 using WinRT.Interop;
 using WebView = Microsoft.Maui.Controls.WebView;
+using Microsoft.UI;
+
 
 #if WINDOWS
 using Microsoft.Maui;
@@ -14,6 +16,8 @@ using Microsoft.Maui.Platform;
 using BTSS.IAR.Kiosk.Platforms.Windows;
 using BTSS.IAR.Kiosk.Services;
 using Microsoft.Maui.LifecycleEvents;
+using Microsoft.UI.Windowing;
+using WinRT.Interop;
 using Application = Microsoft.Maui.Controls.Application;
 #endif
 
@@ -56,7 +60,7 @@ namespace BTSS.IAR.Kiosk
             handlers.AddHandler(typeof(WebView), typeof(KioskWebViewHandler));
         });
         builder.Services.AddSingleton<IAutoStartService, AutoStartService>();
-        builder.Services.AddSingleton<ITrayIconService, TrayIconService>();
+        builder.Services.AddSingleton<ITrayService, TrayService>();
         builder.ConfigureLifecycleEvents(events =>
         {
             events.AddWindows(w =>
@@ -72,7 +76,7 @@ namespace BTSS.IAR.Kiosk
                 {
                     // Use the app’s service provider (DI), not window.Handler
                     var services = MauiWinUIApplication.Current.Services;
-                    var tray = services.GetService<ITrayIconService>();
+                    var tray = services.GetService<ITrayService>();
 
                     // IMPORTANT: pass the WinUI window (or hwnd), not a MAUI Window
                     var hwnd = WindowNative.GetWindowHandle(winuiWindow);
@@ -91,6 +95,11 @@ namespace BTSS.IAR.Kiosk
                                 await kioskApp.TryStartDisplayFromSavedAsync(showAdminIfMissingConfig: true);
                         });
                     }
+                    var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
+                    var appWindow = AppWindow.GetFromWindowId(windowId);
+
+                    // This path is relative to the app's current working/output directory
+                    appWindow.SetIcon(@"Resources\AppIcon\Btss.ico");
                 });
             });
         });

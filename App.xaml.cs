@@ -50,7 +50,7 @@ public partial class App : Application
         if (Windows.Count > 0)
         {
             // Attempt to show/activate main window
-            var tray = Windows[0].Handler?.MauiContext?.Services.GetService<ITrayIconService>();
+            var tray = Windows[0].Handler?.MauiContext?.Services.GetService<ITrayService>();
             tray?.ShowAdmin();
         }
 #endif
