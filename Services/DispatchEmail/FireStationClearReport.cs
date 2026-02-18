@@ -1,0 +1,34 @@
+namespace BTSS.IAR.Kiosk.Services.DispatchEmail;
+
+public class FireStationClearReport
+{
+    public string MessageId { get; set; } = "";
+    public DateTimeOffset ReceivedUtc { get; set; }
+    public string Subject { get; set; } = "";
+
+    public DateTime DispatchTime { get; set; }
+    public string Agency { get; set; } = "";
+    public string DispatchGroup { get; set; } = "";
+    public string EventId { get; set; } = "";
+    public string CaseNumber { get; set; } = "";
+    public string EventTypeCode { get; set; } = "";
+    public string EventTypeText { get; set; } = "";
+    public string EventSubtypeCode { get; set; } = "";
+    public string EventSubtypeText { get; set; } = "";
+    public string Address { get; set; } = "";
+    public string Municipality { get; set; } = "";
+    public string CrossStreet { get; set; } = "";
+
+    public string RawBody { get; set; } = "";
+
+    public List<AssignedUnitStatus> AssignedUnitStatuses { get; set; } = new();
+}
+
+public class AssignedUnitStatus
+{
+    public string Unit { get; set; } = "";
+    public string Group { get; set; } = "";
+    public string Agency { get; set; } = "";
+    public string Status { get; set; } = "";
+    public DateTimeOffset TimestampUtc { get; set; }
+}

@@ -1,0 +1,54 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="BTSS.IAR.Kiosk.AdminPage">
+    <VerticalStackLayout Padding="16" Spacing="12">
+
+        <Label Text="Monitor" FontSize="18" />
+        <Picker x:Name="MonitorPicker"/>
+
+        <Label Text="Startup / Window" FontSize="18" />
+
+        <HorizontalStackLayout Spacing="12">
+            <Label Text="Auto start at Windows login" VerticalOptions="Center" />
+            <Switch x:Name="AutoStartSwitch" />
+        </HorizontalStackLayout>
+
+        <HorizontalStackLayout Spacing="12">
+            <Label Text="Start display on startup (requires saved monitor)" VerticalOptions="Center" />
+            <Switch x:Name="StartDisplayOnStartupSwitch" />
+        </HorizontalStackLayout>
+
+        <HorizontalStackLayout Spacing="12">
+            <Label Text="Start minimized to system tray" VerticalOptions="Center" />
+            <Switch x:Name="StartMinimizedSwitch" />
+        </HorizontalStackLayout>
+        <Label Text="URL" />
+        <Entry x:Name="UrlEntry" Text="https://auth.iamresponding.com/login/member" />
+
+        <Label Text="Agency" />
+        <Entry x:Name="AgencyEntry" />
+
+        <Label Text="Username" />
+        <Entry x:Name="UserEntry" />
+
+        <Label Text="Password" />
+        <Entry x:Name="PassEntry" IsPassword="True" />
+
+        <BoxView HeightRequest="1" Opacity="0.25" />
+        <Label Text="Dispatch Email (Gmail IMAP)" FontSize="18" />
+        <Label Text="Gmail Address" />
+        <Entry x:Name="GmailAddressEntry" Placeholder="example@gmail.com" />
+        <Label Text="Gmail App Password" />
+        <Entry x:Name="GmailAppPasswordEntry" IsPassword="True" Placeholder="16-char app password" />
+        <HorizontalStackLayout Spacing="12">
+            <Button Text="Start Display" Clicked="OnStartClicked" />
+            <Button Text="Stop Display" Clicked="OnStopClicked" />
+        </HorizontalStackLayout>
+        <HorizontalStackLayout Spacing="12">
+            <Button Text="Reset Web Session" Clicked="OnResetWebSessionClicked" />
+            <Button Text="Clear Saved Credentials" Clicked="OnClearCredsClicked" />
+        </HorizontalStackLayout>
+        <Label Text="Hotkey: Ctrl+Shift+A brings admin window to front" FontSize="12" Opacity="0.7"/>
+    </VerticalStackLayout>
+</ContentPage>
