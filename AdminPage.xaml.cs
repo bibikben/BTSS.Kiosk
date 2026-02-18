@@ -1,8 +1,10 @@
 ﻿#if WINDOWS
 using BTSS.IAR.Kiosk.Platforms.Windows;
+using BTSS.IAR.Kiosk.Platforms.Windows.Services;
 using Microsoft.Maui.Platform;
 using WinRT.Interop;
 #endif
+using System.Collections;
 using BTSS.IAR.Kiosk.Services;
 using BTSS.IAR.Kiosk.Services.DispatchEmail;
 using Application = Microsoft.Maui.Controls.Application;
@@ -27,15 +29,38 @@ public partial class AdminPage : ContentPage
 
 #if WINDOWS
     private IAutoStartService? _autoStart;
+    private readonly IPrinterService _printerService;
 #endif
 
-    public AdminPage(App app, IEmailCheckerService emailChecker)
+    public AdminPage(App app, IEmailCheckerService emailChecker,IPrinterService printerService)
     {
         InitializeComponent();
         _app = app;
         _emailChecker = emailChecker;
-    }
 
+        _printerService = printerService;
+
+        var printers = _printerService.GetInstalledPrinters();
+        PrinterPicker.ItemsSource = printers as IList;
+
+        var selected = AppSettings.DefaultPrinterName ?? _printerService.GetSystemDefaultPrinter();
+        if (!string.IsNullOrWhiteSpace(selected) && printers.Contains(selected))
+            PrinterPicker.SelectedItem = selected;
+    }
+    private async void OnSavePrinterClicked(object sender, EventArgs e)
+    {
+#if WINDOWS
+        var selected = PrinterPicker.SelectedItem as string;
+        if (string.IsNullOrWhiteSpace(selected))
+        {
+            await DisplayAlert("Printer", "Please select a printer.", "OK");
+            return;
+        }
+
+        AppSettings.DefaultPrinterName = selected;
+        await DisplayAlert("Printer", $"Saved: {selected}", "OK");
+#endif
+    }
     protected override async void OnAppearing()
     {
         base.OnAppearing();
@@ -162,14 +187,14 @@ public partial class AdminPage : ContentPage
             GmailAddressEntry.Text ?? "",
             GmailAppPasswordEntry.Text ?? ""
             ));
-
+            _emailChecker.Start();
         await _app.StartDisplayAsync(
             url: UrlEntry.Text ?? "",
             agency: AgencyEntry.Text ?? "",
             username: UserEntry.Text ?? "",
             password: PassEntry.Text ?? "",
             monitorIndex: MonitorPicker.SelectedIndex);;
-        _emailChecker.Start();
+        
 #endif
     }
 

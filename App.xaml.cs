@@ -1,4 +1,5 @@
-﻿using BTSS.IAR.Kiosk.Services;
+﻿using BTSS.IAR.Kiosk.Platforms.Windows.Services;
+using BTSS.IAR.Kiosk.Services;
 using BTSS.IAR.Kiosk.Services.DispatchEmail;
 //using Application = Microsoft.Maui.Controls.Application;
 #if WINDOWS
@@ -9,11 +10,12 @@ namespace BTSS.IAR.Kiosk;
 public partial class App : Application
 {
     public Window? DisplayWindow { get; private set; }
-
-    public App(IEmailCheckerService emailChecker)
+    private readonly IEmailCheckerService _emailChecker;
+    public App(IEmailCheckerService emailChecker, IPrinterService printerService)
     {
         InitializeComponent();
-        MainPage = new NavigationPage(new AdminPage(this, emailChecker));
+        _emailChecker = emailChecker;
+        MainPage = new NavigationPage(new AdminPage(this, emailChecker, printerService));
     }
     public async Task TryStartDisplayFromSavedAsync(bool showAdminIfMissingConfig)
     {
@@ -33,7 +35,7 @@ public partial class App : Application
                 ShowAdminWindow();
             return;
         }
-
+        _emailChecker.Start();
         await StartDisplayAsync(
             url: AppSettings.SavedUrl,
             agency: creds.Agency,

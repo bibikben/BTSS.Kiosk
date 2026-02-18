@@ -34,7 +34,15 @@
 
         <Label Text="Password" />
         <Entry x:Name="PassEntry" IsPassword="True" />
+        <VerticalStackLayout Spacing="10">
+            <Label Text="Default Printer" FontAttributes="Bold"/>
 
+            <Picker x:Name="PrinterPicker"
+                    Title="Select a printer" />
+
+            <Button Text="Save Printer"
+                    Clicked="OnSavePrinterClicked" />
+        </VerticalStackLayout>
         <BoxView HeightRequest="1" Opacity="0.25" />
         <Label Text="Dispatch Email (Gmail IMAP)" FontSize="18" />
         <Label Text="Gmail Address" />

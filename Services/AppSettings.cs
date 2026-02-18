@@ -10,7 +10,7 @@ public static class AppSettings
     private const string StartMinimizedKey = "settings.startminimized";
     private const string SelectedMonitorIndexKey = "settings.selectedmonitorindex";
     private const string SavedUrlKey = "settings.savedurl";
-
+    public const string DefaultPrinterNameKey = "default_printer_name";
     public static bool AutoStartAtLogin
     {
         get => Preferences.Get(AutoStartAtLoginKey, false);
@@ -28,7 +28,11 @@ public static class AppSettings
         get => Preferences.Get(StartMinimizedKey, false);
         set => Preferences.Set(StartMinimizedKey, value);
     }
-
+    public static string? DefaultPrinterName
+    {
+        get => Preferences.Get(DefaultPrinterNameKey, (string?)null);
+        set => Preferences.Set(DefaultPrinterNameKey, value);
+    }
     /// <summary>
     /// -1 means not selected.
     /// </summary>

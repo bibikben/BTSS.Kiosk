@@ -1,9 +1,11 @@
 using System.Text;
 using BTSS.IAR.Kiosk.DispatchEmail.Reporting;
+using BTSS.IAR.Kiosk.Services.DispatchEmail;
+
 
 namespace BTSS.IAR.Kiosk.DispatchEmail.Printing;
 
-public class WindowsPrinterService : IPrinterService
+public class WindowsPrinterService : IPrintService
 {
     public Task PrintAsync(string title, PivotTableResult table, string footer)
     {
@@ -66,4 +68,6 @@ public class WindowsPrinterService : IPrinterService
         if (s.Length > width - 1) s = s[..(width - 1)];
         return s.PadRight(width);
     }
+
+ 
 }

@@ -1,3 +1,6 @@
+
+using BTSS.IAR.Kiosk.DispatchEmail.Printing;
+using BTSS.IAR.Kiosk.DispatchEmail.Reporting;
 using MailKit;
 using MailKit.Net.Imap;
 using MailKit.Search;
@@ -21,7 +24,7 @@ public class GmailImapEmailCheckerService : IEmailCheckerService
     private readonly IDispatchReportRepository _repo;
     private readonly IFireStationClearReportParser _parser;
     private readonly IPivotReportBuilder _pivot;
-    private readonly IPrinterService _printer;
+    private readonly IPrintService _printer;
 
     private readonly TimeSpan _pollEvery = TimeSpan.FromSeconds(30);
     private CancellationTokenSource? _cts;
@@ -31,7 +34,7 @@ public class GmailImapEmailCheckerService : IEmailCheckerService
         IDispatchReportRepository repo,
         IFireStationClearReportParser parser,
         IPivotReportBuilder pivot,
-        IPrinterService printer)
+        IPrintService printer)
     {
         _repo = repo;
         _parser = parser;

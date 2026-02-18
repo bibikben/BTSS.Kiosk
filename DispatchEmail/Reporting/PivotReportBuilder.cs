@@ -1,4 +1,5 @@
 using BTSS.IAR.Kiosk.DispatchEmail.Data;
+using BTSS.IAR.Kiosk.Services.DispatchEmail;
 
 namespace BTSS.IAR.Kiosk.DispatchEmail.Reporting;
 
@@ -15,12 +16,12 @@ public record PivotRow(
 
 public interface IPivotReportBuilder
 {
-    PivotTableResult Build(IReadOnlyList<AssignedUnitStatusEntity> statuses);
+    PivotTableResult Build(List<AssignedUnitStatusEntity> statuses);
 }
 
 public class PivotReportBuilder : IPivotReportBuilder
 {
-    public PivotTableResult Build(IReadOnlyList<AssignedUnitStatusEntity> statuses)
+    public PivotTableResult Build(List<AssignedUnitStatusEntity> statuses)
     {
         var statusCols = statuses
             .Select(s => (s.Status ?? "").Trim())

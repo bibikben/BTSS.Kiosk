@@ -1,8 +1,9 @@
 using System.Text;
+using BTSS.IAR.Kiosk.DispatchEmail.Reporting;
 
 namespace BTSS.IAR.Kiosk.Services.DispatchEmail;
 
-public interface IPrinterService
+public interface IPrintService
 {
     Task PrintAsync(string title, PivotTableResult table, string footer);
 }
@@ -10,7 +11,7 @@ public interface IPrinterService
 /// <summary>
 /// Simple Windows default-printer output for the pivoted report.
 /// </summary>
-public class WindowsPrinterService : IPrinterService
+public class WindowsPrintService : IPrintService
 {
     public Task PrintAsync(string title, PivotTableResult table, string footer)
     {

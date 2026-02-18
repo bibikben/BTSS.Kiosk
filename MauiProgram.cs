@@ -1,9 +1,11 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using BTSS.IAR.Kiosk.DispatchEmail.Reporting;
+using BTSS.IAR.Kiosk.Services.DispatchEmail;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Maui;
 using Microsoft.Maui.Hosting;
 using Microsoft.Maui.Controls;
-using BTSS.IAR.Kiosk.Services.DispatchEmail;
+
 using WinRT.Interop;
 using WebView = Microsoft.Maui.Controls.WebView;
 using Microsoft.UI;
@@ -19,6 +21,7 @@ using Microsoft.Maui.LifecycleEvents;
 using Microsoft.UI.Windowing;
 using WinRT.Interop;
 using Application = Microsoft.Maui.Controls.Application;
+using BTSS.IAR.Kiosk.Platforms.Windows.Services;
 #endif
 
 
@@ -52,14 +55,15 @@ namespace BTSS.IAR.Kiosk
             builder.Services.AddSingleton<IDispatchReportRepository, DispatchReportRepository>();
 	            builder.Services.AddSingleton<IFireStationClearReportParser, FireStationClearReportParser>();
 	            builder.Services.AddSingleton<IPivotReportBuilder, PivotReportBuilder>();
-	            builder.Services.AddSingleton<IPrinterService, WindowsPrinterService>();
+	            builder.Services.AddSingleton<IPrintService, WindowsPrintService>();
             builder.Services.AddSingleton<IEmailCheckerService, GmailImapEmailCheckerService>();
 #if WINDOWS
         builder.ConfigureMauiHandlers(handlers =>
         {
             handlers.AddHandler(typeof(WebView), typeof(KioskWebViewHandler));
         });
-        builder.Services.AddSingleton<IAutoStartService, AutoStartService>();
+        builder.Services.AddSingleton<IPrinterService, PrinterService>();
+            builder.Services.AddSingleton<IAutoStartService, AutoStartService>();
         builder.Services.AddSingleton<ITrayService, TrayService>();
         builder.ConfigureLifecycleEvents(events =>
         {

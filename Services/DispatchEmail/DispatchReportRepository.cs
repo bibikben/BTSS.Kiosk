@@ -1,3 +1,4 @@
+using BTSS.IAR.Kiosk.DispatchEmail.Data;
 using SQLite;
 
 namespace BTSS.IAR.Kiosk.Services.DispatchEmail;
@@ -7,7 +8,7 @@ public interface IDispatchReportRepository
     Task InitializeAsync();
     Task<bool> ExistsByMessageIdAsync(string messageId);
     Task<int> InsertAsync(FireStationClearReport report);
-    Task<List<DispatchAssignedUnitStatusEntity>> GetStatusesAsync(int reportId);
+    Task<List<AssignedUnitStatusEntity>> GetStatusesAsync(int reportId);
 }
 
 public class DispatchReportRepository : IDispatchReportRepository
@@ -83,11 +84,20 @@ public class DispatchReportRepository : IDispatchReportRepository
         return entity.Id;
     }
 
-    public async Task<List<DispatchAssignedUnitStatusEntity>> GetStatusesAsync(int reportId)
+    public async Task<List<AssignedUnitStatusEntity>> GetStatusesAsync(int reportId)
     {
-        await InitializeAsync();
-        return await _db!.Table<DispatchAssignedUnitStatusEntity>()
-            .Where(x => x.ClearReportId == reportId)
-            .ToListAsync();
+        try
+        {
+            await InitializeAsync();
+            var stats = await _db!.Table<AssignedUnitStatusEntity>()
+                .Where(x => x.ClearReportId == reportId)
+                .ToListAsync();
+            return stats;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error fetching statuses for report {reportId}: {ex}");
+            return new List<AssignedUnitStatusEntity>();    
+        }
     }
 }
