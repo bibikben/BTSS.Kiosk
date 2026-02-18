@@ -1,16 +1,20 @@
 #if WINDOWS
-using System.Windows.Forms;
 using Microsoft.Maui.Platform;
+using Microsoft.UI;
 using Microsoft.UI.Windowing;
+using System.Windows.Forms;
 using WinRT.Interop;
+using Application = Microsoft.Maui.Controls.Application;
+
 
 namespace BTSS.IAR.Kiosk.Platforms.Windows;
 
 public interface ITrayIconService : IDisposable
 {
-    void Initialize(Window mainMauiWindow);
-    void ShowAdmin();
+    void Initialize(IntPtr hwnd);
     void HideAdmin();
+    void ShowAdmin();
+    void Dispose();
     void Quit();
     bool IsInitialized { get; }
 }
@@ -29,17 +33,18 @@ public sealed class TrayIconService : ITrayIconService
     public bool IsInitialized => _notify != null;
     public bool IsQuitting => _quitting;
 
-    public void Initialize(Window mainMauiWindow)
+    public void Initialize(IntPtr hwnd)
     {
         if (_notify != null) return;
 
-        _mauiWindow = mainMauiWindow;
+        //_mauiWindow = mainMauiWindow;
 
-        if (mainMauiWindow.Handler?.PlatformView is not MauiWinUIWindow winuiWindow)
-            return;
+        //if (mainMauiWindow.Handler?.PlatformView is not MauiWinUIWindow winuiWindow)
+        //    return;
 
-        var hwnd = WindowNative.GetWindowHandle(winuiWindow);
+        //var hwnd = WindowNative.GetWindowHandle(winuiWindow);
         var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
+
         _appWindow = AppWindow.GetFromWindowId(windowId);
 
         _appWindow.Closing += (_, e) =>

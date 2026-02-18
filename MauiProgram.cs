@@ -1,10 +1,22 @@
 ﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Maui;
+using Microsoft.Maui.Hosting;
+using Microsoft.Maui.Controls;
 using BTSS.IAR.Kiosk.Services.DispatchEmail;
+using WinRT.Interop;
+using WebView = Microsoft.Maui.Controls.WebView;
+
 #if WINDOWS
+using Microsoft.Maui;
+using Microsoft.Maui.Controls.PlatformConfiguration.WindowsSpecific;
+using Microsoft.Maui.Platform;
 using BTSS.IAR.Kiosk.Platforms.Windows;
 using BTSS.IAR.Kiosk.Services;
 using Microsoft.Maui.LifecycleEvents;
+using Application = Microsoft.Maui.Controls.Application;
 #endif
+
 
 namespace BTSS.IAR.Kiosk
 {
@@ -56,20 +68,21 @@ namespace BTSS.IAR.Kiosk
                     RuntimeFlags.IsAutoStartInvocation = cmd.Any(a => string.Equals(a, "--autostart", StringComparison.OrdinalIgnoreCase));
                 });
 
-                w.OnWindowCreated(window =>
+                w.OnWindowCreated(winuiWindow =>
                 {
-                    // Initialize system tray and close-to-tray behavior
-                    var services = window..Handler?.MauiContext?.Services;
-                    var tray = services?.GetService<ITrayIconService>();
-                    tray?.Initialize(window);
+                    // Use the app’s service provider (DI), not window.Handler
+                    var services = MauiWinUIApplication.Current.Services;
+                    var tray = services.GetService<ITrayIconService>();
 
-                    // Start minimized (either explicitly set, or autostart invocation)
+                    // IMPORTANT: pass the WinUI window (or hwnd), not a MAUI Window
+                    var hwnd = WindowNative.GetWindowHandle(winuiWindow);
+                    tray?.Initialize(hwnd);
+
                     if (AppSettings.StartMinimized || RuntimeFlags.IsAutoStartInvocation)
                     {
                         MainThread.BeginInvokeOnMainThread(() => tray?.HideAdmin());
                     }
 
-                    // If configured, start display automatically once window exists.
                     if (AppSettings.StartDisplayOnStartup && AppSettings.SelectedMonitorIndex >= 0)
                     {
                         MainThread.BeginInvokeOnMainThread(async () =>

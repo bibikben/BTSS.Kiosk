@@ -1,8 +1,9 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
-	<PropertyGroup>
 
-		<TargetFrameworks>net10.0-windows10.0.19041.0</TargetFrameworks>
+
+	<PropertyGroup>
+		
 
 		<!-- Note for MacCatalyst:
 		The default runtime is maccatalyst-x64, except in Release config, in which case the default is maccatalyst-x64;maccatalyst-arm64.
@@ -10,14 +11,13 @@
 		The Mac App Store will NOT accept apps with ONLY maccatalyst-arm64 indicated;
 		either BOTH runtimes must be indicated or ONLY macatalyst-x64. -->
 		<!-- For example: <RuntimeIdentifiers>maccatalyst-x64;maccatalyst-arm64</RuntimeIdentifiers> -->
-		<UseWindowsForms>true</UseWindowsForms>
 		<OutputType>Exe</OutputType>
 		<RootNamespace>BTSS.IAR.Kiosk</RootNamespace>
 		<UseMaui>true</UseMaui>
 		<SingleProject>true</SingleProject>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
-
+		<TargetFrameworks>net10.0-windows10.0.19041.0</TargetFrameworks>
 		<!-- Display name -->
 		<ApplicationTitle>BTSS.IAR.Kiosk</ApplicationTitle>
 
@@ -33,8 +33,37 @@
 
 		<SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
 		<TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+		<CreateMSIXPackage>True</CreateMSIXPackage>
+		<AssemblyTitle>Kiosk Window Controller</AssemblyTitle>
+		<AssemblyName>BTSS Kiosk Controller</AssemblyName>
 	</PropertyGroup>
 
+	<PropertyGroup Condition="'$(TargetFramework)'=='net10.0-windows10.0.19041.0'">
+		<!-- Keep WinForms for NotifyIcon -->
+		<UseWindowsForms>true</UseWindowsForms>
+
+		<!-- Prevent WindowsDesktop/WPF from treating *.xaml as WPF Page/ApplicationDefinition -->
+		<EnableDefaultPageItems>false</EnableDefaultPageItems>
+		<EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|net10.0-windows10.0.19041.0|AnyCPU'">
+		<ApplicationTitle>BTSS Kiosk Controller</ApplicationTitle>
+		<ApplicationIdGuid>051B5FD5-2AE1-4E8F-9C47-15B379544952</ApplicationIdGuid>
+		<ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release|net10.0-windows10.0.19041.0|AnyCPU'">
+		<ApplicationTitle>BTSS Kiosk Controller</ApplicationTitle>
+		<ApplicationIdGuid>051B5FD5-2AE1-4E8F-9C47-15B379544952</ApplicationIdGuid>
+		<ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+	</PropertyGroup>
+
+	<ItemGroup Condition="'$(TargetFramework)'=='net10.0-windows10.0.19041.0'">
+		<!-- Extra safety: remove any accidental WPF XAML itemization -->
+		<Page Remove="**\*.xaml" />
+		<ApplicationDefinition Remove="**\*.xaml" />
+	</ItemGroup>
 
 	<ItemGroup>
 		<!-- App Icon -->
@@ -46,7 +75,7 @@
 		<!-- Images -->
 		<MauiImage Include="Resources\Images\*" />
 		<MauiImage Update="Resources\Images\dotnet_bot.png" Resize="True" BaseSize="300,185" />
-		
+
 		<!-- Custom Fonts -->
 		<MauiFont Include="Resources\Fonts\*" />
 
@@ -55,17 +84,49 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<MauiXaml Remove="Platforms\Windows\App.xaml" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<PackageReference Include="MailKit" Version="4.15.0" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.3" />
+		<PackageReference Include="Microsoft.Maui.Controls" Version="10.0.20" />
+		<PackageReference Include="Microsoft.Maui.Core" Version="10.0.20" />
 		<PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3800.47" />
 		<PackageReference Include="sqlite-net-pcl" Version="1.9.172" />
 		<PackageReference Include="System.Drawing.Common" Version="10.0.3" />
 		<PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.3" />
 	</ItemGroup>
+
+	<ItemGroup>
+		<!-- Ensure Windows App.xaml is treated as WinUI Page, not WPF ApplicationDefinition -->
+		<Page Remove="Platforms\Windows\App.xaml" />
+		<ApplicationDefinition Remove="Platforms\Windows\App.xaml" />
+		<Page Include="Platforms\Windows\App.xaml" />
+	</ItemGroup>
+	<ItemGroup>
+		<Page Include="Platforms\Windows\App.xaml" />
+	</ItemGroup>
 	<ItemGroup>
 		<Compile Update="DisplayPage.xaml.cs">
 			<DependentUpon>DisplayPage.xaml</DependentUpon>
 		</Compile>
+		<Compile Update="Properties\Settings.Designer.cs">
+			<DesignTimeSharedInput>True</DesignTimeSharedInput>
+			<AutoGen>True</AutoGen>
+			<DependentUpon>Settings.settings</DependentUpon>
+		</Compile>
 	</ItemGroup>
-
+	<ItemGroup>
+		<None Update="Properties\Settings.settings">
+			<Generator>SettingsSingleFileGenerator</Generator>
+			<LastGenOutput>Settings.Designer.cs</LastGenOutput>
+		</None>
+	</ItemGroup>
+	<Target Name="ShowItems" AfterTargets="PrepareForBuild">
+		<Message Importance="high" Text="---- Page items ----" />
+		<Message Importance="high" Text="@(Page)" />
+		<Message Importance="high" Text="---- ApplicationDefinition items ----" />
+		<Message Importance="high" Text="@(ApplicationDefinition)" />
+	</Target>
 </Project>
