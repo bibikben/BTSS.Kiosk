@@ -1,5 +1,6 @@
 ﻿using BTSS.IAR.Kiosk.DispatchEmail.Reporting;
 using BTSS.IAR.Kiosk.Services.DispatchEmail;
+using CommunityToolkit.Maui;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Maui;
@@ -9,6 +10,8 @@ using Microsoft.Maui.Controls;
 using WinRT.Interop;
 using WebView = Microsoft.Maui.Controls.WebView;
 using Microsoft.UI;
+using CommunityToolkit.Maui.Core;
+
 
 
 #if WINDOWS
@@ -19,6 +22,7 @@ using BTSS.IAR.Kiosk.Platforms.Windows;
 using BTSS.IAR.Kiosk.Services;
 using Microsoft.Maui.LifecycleEvents;
 using Microsoft.UI.Windowing;
+using Windows.Graphics;
 using WinRT.Interop;
 using Application = Microsoft.Maui.Controls.Application;
 using BTSS.IAR.Kiosk.Platforms.Windows.Services;
@@ -45,13 +49,17 @@ namespace BTSS.IAR.Kiosk
             var builder = MauiApp.CreateBuilder();
             builder
                 .UseMauiApp<App>()
+                .UseMauiCommunityToolkit()
+
+                // After initializing the .NET MAUI Community Toolkit, optionally add additional fonts
                 .ConfigureFonts(fonts =>
                 {
                     fonts.AddFont("OpenSans-Regular.ttf", "OpenSansRegular");
                     fonts.AddFont("OpenSans-Semibold.ttf", "OpenSansSemibold");
                 });
 
-	            // Dispatch Email / Clear Report pipeline
+
+            // Dispatch Email / Clear Report pipeline
             builder.Services.AddSingleton<IDispatchReportRepository, DispatchReportRepository>();
 	            builder.Services.AddSingleton<IFireStationClearReportParser, FireStationClearReportParser>();
 	            builder.Services.AddSingleton<IPivotReportBuilder, PivotReportBuilder>();
@@ -78,12 +86,32 @@ namespace BTSS.IAR.Kiosk
 
                 w.OnWindowCreated(winuiWindow =>
                 {
+                    var hwnd = WindowNative.GetWindowHandle(winuiWindow);
+                    // ✅ Set initial + minimum size for the Admin window
+                    try
+                    {
+                        
+                        var windowId = Win32Interop.GetWindowIdFromWindow(hwnd);
+                        var appWindow = AppWindow.GetFromWindowId(windowId);
+
+                        // Initial size
+                        appWindow.Resize(new SizeInt32(900, 650));
+
+                        // Minimum size (Windows App SDK 1.7+)
+                        if (appWindow.Presenter is OverlappedPresenter p)
+                        {
+                            p.PreferredMinimumWidth = 800;
+                            p.PreferredMinimumHeight = 600;
+                        }
+                    }
+                    catch
+                    {
+                        // ignore sizing errors (older Windows App SDK builds can be picky)
+                    }
                     // Use the app’s service provider (DI), not window.Handler
                     var services = MauiWinUIApplication.Current.Services;
                     var tray = services.GetService<ITrayService>();
 
-                    // IMPORTANT: pass the WinUI window (or hwnd), not a MAUI Window
-                    var hwnd = WindowNative.GetWindowHandle(winuiWindow);
                     tray?.Initialize(hwnd);
 
                     if (AppSettings.StartMinimized || RuntimeFlags.IsAutoStartInvocation)

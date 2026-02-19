@@ -2,7 +2,7 @@ using SQLite;
 
 namespace BTSS.IAR.Kiosk.DispatchEmail.Data;
 
-[Table("ClearReports")]
+[Table("DispatchClearReports")]
 public class ClearReportEntity
 {
     [PrimaryKey, AutoIncrement]
@@ -20,7 +20,7 @@ public class ClearReportEntity
     public string? Location { get; set; }
 }
 
-[Table("AssignedUnitStatuses")]
+[Table("DispatchAssignedUnitStatuses")]
 public class AssignedUnitStatusEntity
 {
     [PrimaryKey, AutoIncrement]

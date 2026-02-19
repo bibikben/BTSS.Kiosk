@@ -1,15 +1,14 @@
-﻿#if WINDOWS
-using BTSS.IAR.Kiosk.Platforms.Windows;
-using BTSS.IAR.Kiosk.Platforms.Windows.Services;
-using Microsoft.Maui.Platform;
-using WinRT.Interop;
-#endif
 using System.Collections;
 using BTSS.IAR.Kiosk.Services;
 using BTSS.IAR.Kiosk.Services.DispatchEmail;
 using Application = Microsoft.Maui.Controls.Application;
+
 #if WINDOWS
+using BTSS.IAR.Kiosk.Platforms.Windows;
+using BTSS.IAR.Kiosk.Platforms.Windows.Services;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Maui.Platform;
+using WinRT.Interop;
 #endif
 
 namespace BTSS.IAR.Kiosk;
@@ -19,34 +18,56 @@ public partial class AdminPage : ContentPage
 #if WINDOWS
     private List<MonitorInfo> _monitors = new();
     private GlobalHotKey? _hotKey;
+    private bool _eventsWired;
+    private IAutoStartService? _autoStart;
 #endif
 
     private readonly App _app;
     private readonly IEmailCheckerService _emailChecker;
 #if WINDOWS
-    private bool _eventsWired;
-#endif
-
-#if WINDOWS
-    private IAutoStartService? _autoStart;
     private readonly IPrinterService _printerService;
 #endif
 
-    public AdminPage(App app, IEmailCheckerService emailChecker,IPrinterService printerService)
+    public AdminPage(App app, IEmailCheckerService emailChecker, IPrinterService printerService)
     {
         InitializeComponent();
         _app = app;
         _emailChecker = emailChecker;
 
+#if WINDOWS
         _printerService = printerService;
-
         var printers = _printerService.GetInstalledPrinters();
         PrinterPicker.ItemsSource = printers as IList;
 
         var selected = AppSettings.DefaultPrinterName ?? _printerService.GetSystemDefaultPrinter();
         if (!string.IsNullOrWhiteSpace(selected) && printers.Contains(selected))
             PrinterPicker.SelectedItem = selected;
+#endif
+
+        // Default tab
+        SetTab("general");
     }
+
+    private void OnTabCheckedChanged(object sender, CheckedChangedEventArgs e)
+    {
+        if (!e.Value) return;
+
+        if (sender is RadioButton rb)
+        {
+            var tab = (rb.Value?.ToString() ?? "general").Trim().ToLowerInvariant();
+            SetTab(tab);
+        }
+    }
+
+    private void SetTab(string tab)
+    {
+        // Panels are defined in AdminPage.xaml
+        GeneralPanel.IsVisible = tab == "general";
+        DisplayPanel.IsVisible = tab == "display";
+        EmailPanel.IsVisible = tab == "email";
+        PrinterPanel.IsVisible = tab == "printer";
+    }
+
     private async void OnSavePrinterClicked(object sender, EventArgs e)
     {
 #if WINDOWS
@@ -61,14 +82,16 @@ public partial class AdminPage : ContentPage
         await DisplayAlert("Printer", $"Saved: {selected}", "OK");
 #endif
     }
+
     protected override async void OnAppearing()
     {
         base.OnAppearing();
 
 #if WINDOWS
-        _autoStart ??= this.Handler?.MauiContext?.Services.GetService<IAutoStartService>()
-                       ?? Application.Current?.Windows.FirstOrDefault()?.Handler?.MauiContext?.Services.GetService<IAutoStartService>()
-                       ?? new AutoStartService();
+        _autoStart ??=
+            this.Handler?.MauiContext?.Services.GetService<IAutoStartService>()
+            ?? Application.Current?.Windows.FirstOrDefault()?.Handler?.MauiContext?.Services.GetService<IAutoStartService>()
+            ?? new AutoStartService();
 
         // Settings switches
         AutoStartSwitch.IsToggled = _autoStart.IsEnabled();
@@ -78,18 +101,18 @@ public partial class AdminPage : ContentPage
         if (!_eventsWired)
         {
             _eventsWired = true;
-            AutoStartSwitch.Toggled += (_, e) =>
+
+            AutoStartSwitch.Toggled += (_, ev) =>
             {
-                _autoStart?.SetEnabled(e.Value);
-                AppSettings.AutoStartAtLogin = e.Value;
+                _autoStart?.SetEnabled(ev.Value);
+                AppSettings.AutoStartAtLogin = ev.Value;
             };
 
-            StartDisplayOnStartupSwitch.Toggled += (_, e) => AppSettings.StartDisplayOnStartup = e.Value;
-            StartMinimizedSwitch.Toggled += (_, e) => AppSettings.StartMinimized = e.Value;
+            StartDisplayOnStartupSwitch.Toggled += (_, ev) => AppSettings.StartDisplayOnStartup = ev.Value;
+            StartMinimizedSwitch.Toggled += (_, ev) => AppSettings.StartMinimized = ev.Value;
         }
+
         // Load saved creds
-
-
         var saved = await CredentialStore.LoadAsync();
         if (saved != null)
         {
@@ -97,9 +120,11 @@ public partial class AdminPage : ContentPage
             UserEntry.Text = saved.Username;
             PassEntry.Text = saved.Password;
         }
-        // Load saved Gmail creds
+
+        // Load saved URL
         UrlEntry.Text = AppSettings.SavedUrl;
-   // Monitor picker
+
+        // Monitor picker
         _monitors = MonitorService.GetMonitors();
         MonitorPicker.ItemsSource = _monitors
             .Select((m, i) => $"{i}: {m.DeviceName} {(m.IsPrimary ? "(Primary)" : "")} [{m.Width}x{m.Height}]")
@@ -114,44 +139,40 @@ public partial class AdminPage : ContentPage
         // Always keep monitor selection remembered
         MonitorPicker.SelectedIndexChanged -= OnMonitorChanged;
         MonitorPicker.SelectedIndexChanged += OnMonitorChanged;
-       
-	   
-	   
-	   
-	   
-	   
-	   
-	    var emailSaved = await DispatchEmailCredentialStore.LoadAsync();
+
+        // Load saved Gmail creds
+        var emailSaved = await DispatchEmailCredentialStore.LoadAsync();
         if (emailSaved != null)
         {
             GmailAddressEntry.Text = emailSaved.EmailAddress;
             GmailAppPasswordEntry.Text = emailSaved.AppPassword;
         }
+
         RegisterAdminHotKey();
 #endif
     }
+
 #if WINDOWS
     private void OnMonitorChanged(object? sender, EventArgs e)
     {
         if (MonitorPicker.SelectedIndex >= 0)
             AppSettings.SelectedMonitorIndex = MonitorPicker.SelectedIndex;
     }
-#endif
 
-#if WINDOWS
     private void RegisterAdminHotKey()
     {
         if (_hotKey != null) return;
 
         var mauiWindow = this.Window;
-        if (mauiWindow?.Handler?.PlatformView is not MauiWinUIWindow winuiWindow)
-            return;
+        if (mauiWindow?.Handler?.PlatformView is not MauiWinUIWindow winuiWindow) return;
 
         var hwnd = WindowNative.GetWindowHandle(winuiWindow);
 
         // Ctrl+Shift+A
         const uint VK_A = 0x41;
-        _hotKey = new GlobalHotKey(hwnd, id: 0xBEEF,
+        _hotKey = new GlobalHotKey(
+            hwnd,
+            id: 0xBEEF,
             modifiers: GlobalHotKey.MOD_CONTROL | GlobalHotKey.MOD_SHIFT,
             vk: VK_A);
 
@@ -165,6 +186,7 @@ public partial class AdminPage : ContentPage
     protected override void OnDisappearing()
     {
         base.OnDisappearing();
+
 #if WINDOWS
         _hotKey?.Dispose();
         _hotKey = null;
@@ -176,25 +198,25 @@ public partial class AdminPage : ContentPage
 #if WINDOWS
         AppSettings.SavedUrl = UrlEntry.Text ?? AppSettings.SavedUrl;
         AppSettings.SelectedMonitorIndex = MonitorPicker.SelectedIndex;
+
         // Save creds securely
         await CredentialStore.SaveAsync(new StoredCreds(
             AgencyEntry.Text ?? "",
             UserEntry.Text ?? "",
-            PassEntry.Text ?? ""
-        ));
+            PassEntry.Text ?? ""));
 
-            await DispatchEmailCredentialStore.SaveAsync(new DispatchEmailCreds(
+        await DispatchEmailCredentialStore.SaveAsync(new DispatchEmailCreds(
             GmailAddressEntry.Text ?? "",
-            GmailAppPasswordEntry.Text ?? ""
-            ));
-            _emailChecker.Start();
+            GmailAppPasswordEntry.Text ?? ""));
+
+        _emailChecker.Start();
+
         await _app.StartDisplayAsync(
             url: UrlEntry.Text ?? "",
             agency: AgencyEntry.Text ?? "",
             username: UserEntry.Text ?? "",
             password: PassEntry.Text ?? "",
-            monitorIndex: MonitorPicker.SelectedIndex);;
-        
+            monitorIndex: MonitorPicker.SelectedIndex);
 #endif
     }
 
@@ -211,10 +233,12 @@ public partial class AdminPage : ContentPage
     {
 #if WINDOWS
         CredentialStore.Clear();
-		DispatchEmailCredentialStore.Clear();
+        DispatchEmailCredentialStore.Clear();
+
         AgencyEntry.Text = "";
         UserEntry.Text = "";
         PassEntry.Text = "";
+
         GmailAddressEntry.Text = "";
         GmailAppPasswordEntry.Text = "";
 #endif
@@ -235,7 +259,7 @@ public partial class AdminPage : ContentPage
         //}
         //catch
         //{
-        //    // If locked, you can retry after app restart; keeping silent here is fine for kiosk
+        //    // If locked, you can retry after app restart.
         //}
 #endif
     }

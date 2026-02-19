@@ -1,62 +1,106 @@
-﻿<?xml version="1.0" encoding="utf-8" ?>
-<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
-             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
-             x:Class="BTSS.IAR.Kiosk.AdminPage">
-    <VerticalStackLayout Padding="16" Spacing="12">
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="BTSS.IAR.Kiosk.AdminPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    Title="Admin"
+    Padding="12">
 
-        <Label Text="Monitor" FontSize="18" />
-        <Picker x:Name="MonitorPicker"/>
+    <Grid RowDefinitions="Auto,Auto,*" RowSpacing="12">
 
-        <Label Text="Startup / Window" FontSize="18" />
-
-        <HorizontalStackLayout Spacing="12">
-            <Label Text="Auto start at Windows login" VerticalOptions="Center" />
-            <Switch x:Name="AutoStartSwitch" />
-        </HorizontalStackLayout>
-
-        <HorizontalStackLayout Spacing="12">
-            <Label Text="Start display on startup (requires saved monitor)" VerticalOptions="Center" />
-            <Switch x:Name="StartDisplayOnStartupSwitch" />
-        </HorizontalStackLayout>
-
-        <HorizontalStackLayout Spacing="12">
-            <Label Text="Start minimized to system tray" VerticalOptions="Center" />
-            <Switch x:Name="StartMinimizedSwitch" />
-        </HorizontalStackLayout>
-        <Label Text="URL" />
-        <Entry x:Name="UrlEntry" Text="https://auth.iamresponding.com/login/member" />
-
-        <Label Text="Agency" />
-        <Entry x:Name="AgencyEntry" />
-
-        <Label Text="Username" />
-        <Entry x:Name="UserEntry" />
-
-        <Label Text="Password" />
-        <Entry x:Name="PassEntry" IsPassword="True" />
-        <VerticalStackLayout Spacing="10">
-            <Label Text="Default Printer" FontAttributes="Bold"/>
-
-            <Picker x:Name="PrinterPicker"
-                    Title="Select a printer" />
-
-            <Button Text="Save Printer"
-                    Clicked="OnSavePrinterClicked" />
-        </VerticalStackLayout>
-        <BoxView HeightRequest="1" Opacity="0.25" />
-        <Label Text="Dispatch Email (Gmail IMAP)" FontSize="18" />
-        <Label Text="Gmail Address" />
-        <Entry x:Name="GmailAddressEntry" Placeholder="example@gmail.com" />
-        <Label Text="Gmail App Password" />
-        <Entry x:Name="GmailAppPasswordEntry" IsPassword="True" Placeholder="16-char app password" />
-        <HorizontalStackLayout Spacing="12">
-            <Button Text="Start Display" Clicked="OnStartClicked" />
-            <Button Text="Stop Display" Clicked="OnStopClicked" />
-        </HorizontalStackLayout>
-        <HorizontalStackLayout Spacing="12">
+        <!-- Action buttons (moved to top) -->
+        <HorizontalStackLayout Grid.Row="0" Spacing="10">
+            <Button Text="Start" Clicked="OnStartClicked" />
+            <Button Text="Stop" Clicked="OnStopClicked" />
+            <Button Text="Clear Creds" Clicked="OnClearCredsClicked" />
             <Button Text="Reset Web Session" Clicked="OnResetWebSessionClicked" />
-            <Button Text="Clear Saved Credentials" Clicked="OnClearCredsClicked" />
+            <Button Text="Save Printer" Clicked="OnSavePrinterClicked" />
         </HorizontalStackLayout>
-        <Label Text="Hotkey: Ctrl+Shift+A brings admin window to front" FontSize="12" Opacity="0.7"/>
-    </VerticalStackLayout>
+
+        <!-- Tabs -->
+        <Grid Grid.Row="1" ColumnDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="10">
+            <RadioButton
+                Grid.Column="0"
+                Content="General"
+                GroupName="AdminTabs"
+                IsChecked="True"
+                CheckedChanged="OnTabCheckedChanged"
+                Value="general" />
+
+            <RadioButton
+                Grid.Column="1"
+                Content="Display"
+                GroupName="AdminTabs"
+                CheckedChanged="OnTabCheckedChanged"
+                Value="display" />
+
+            <RadioButton
+                Grid.Column="2"
+                Content="Email"
+                GroupName="AdminTabs"
+                CheckedChanged="OnTabCheckedChanged"
+                Value="email" />
+
+            <RadioButton
+                Grid.Column="3"
+                Content="Printer"
+                GroupName="AdminTabs"
+                CheckedChanged="OnTabCheckedChanged"
+                Value="printer" />
+        </Grid>
+
+        <!-- Tab content -->
+        <ScrollView Grid.Row="2">
+            <VerticalStackLayout Spacing="16">
+
+                <!-- General tab -->
+                <VerticalStackLayout x:Name="GeneralPanel" Spacing="12">
+                    <Label Text="Startup" FontAttributes="Bold" FontSize="18" />
+
+                    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" RowSpacing="10">
+                        <Label Grid.Row="0" Grid.Column="0" Text="Auto start at Windows login" VerticalOptions="Center" />
+                        <Switch Grid.Row="0" Grid.Column="1" x:Name="AutoStartSwitch" />
+
+                        <Label Grid.Row="1" Grid.Column="0" Text="Start display on startup" VerticalOptions="Center" />
+                        <Switch Grid.Row="1" Grid.Column="1" x:Name="StartDisplayOnStartupSwitch" />
+
+                        <Label Grid.Row="2" Grid.Column="0" Text="Start minimized" VerticalOptions="Center" />
+                        <Switch Grid.Row="2" Grid.Column="1" x:Name="StartMinimizedSwitch" />
+                    </Grid>
+
+                    <Label Text="Kiosk URL" FontAttributes="Bold" FontSize="18" />
+                    <Entry x:Name="UrlEntry" Placeholder="https://..." />
+
+                    <Label Text="Portal Credentials" FontAttributes="Bold" FontSize="18" />
+                    <Entry x:Name="AgencyEntry" Placeholder="Agency" />
+                    <Entry x:Name="UserEntry" Placeholder="Username" />
+                    <Entry x:Name="PassEntry" Placeholder="Password" IsPassword="True" />
+                </VerticalStackLayout>
+
+                <!-- Display tab -->
+                <VerticalStackLayout x:Name="DisplayPanel" Spacing="12" IsVisible="False">
+                    <Label Text="Display" FontAttributes="Bold" FontSize="18" />
+                    <Label Text="Monitor" />
+                    <Picker x:Name="MonitorPicker" Title="Select monitor" />
+                </VerticalStackLayout>
+
+                <!-- Email tab -->
+                <VerticalStackLayout x:Name="EmailPanel" Spacing="12" IsVisible="False">
+                    <Label Text="Dispatch Email" FontAttributes="Bold" FontSize="18" />
+                    <Entry x:Name="GmailAddressEntry" Placeholder="Email address" Keyboard="Email" />
+                    <Entry x:Name="GmailAppPasswordEntry" Placeholder="App password" IsPassword="True" />
+                </VerticalStackLayout>
+
+                <!-- Printer tab -->
+                <VerticalStackLayout x:Name="PrinterPanel" Spacing="12" IsVisible="False">
+                    <Label Text="Printer" FontAttributes="Bold" FontSize="18" />
+                    <Picker x:Name="PrinterPicker" Title="Select printer" />
+                    <Label FontSize="12" Opacity="0.8"
+                           Text="Use the Save Printer button at the top after selecting a printer." />
+                </VerticalStackLayout>
+
+            </VerticalStackLayout>
+        </ScrollView>
+
+    </Grid>
 </ContentPage>
