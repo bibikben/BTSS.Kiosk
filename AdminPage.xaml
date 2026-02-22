@@ -12,6 +12,8 @@
         <HorizontalStackLayout Grid.Row="0" Spacing="10">
             <Button Text="Start" Clicked="OnStartClicked" />
             <Button Text="Stop" Clicked="OnStopClicked" />
+            <Button Text="Calls" Clicked="OnCallsClicked" />
+            <Button Text="Agencies" Clicked="OnAgenciesClicked" />
             <Button Text="Clear Creds" Clicked="OnClearCredsClicked" />
             <Button Text="Reset Web Session" Clicked="OnResetWebSessionClicked" />
             <Button Text="Save Printer" Clicked="OnSavePrinterClicked" />
@@ -86,9 +88,27 @@
 
                 <!-- Email tab -->
                 <VerticalStackLayout x:Name="EmailPanel" Spacing="12" IsVisible="False">
-                    <Label Text="Dispatch Email" FontAttributes="Bold" FontSize="18" />
-                    <Entry x:Name="GmailAddressEntry" Placeholder="Email address" Keyboard="Email" />
-                    <Entry x:Name="GmailAppPasswordEntry" Placeholder="App password" IsPassword="True" />
+                    <Label Text="Processing" FontAttributes="Bold" FontSize="18" />
+
+                    <Label Text="Mode" />
+                    <Picker x:Name="ProcessingModePicker" Title="Select mode" />
+
+                    <!-- Email mode fields -->
+                    <VerticalStackLayout x:Name="EmailFields" Spacing="10">
+                        <Label Text="Dispatch Email" FontAttributes="Bold" FontSize="16" />
+                        <Entry x:Name="GmailAddressEntry" Placeholder="Email address" Keyboard="Email" />
+                        <Entry x:Name="GmailAppPasswordEntry" Placeholder="App password" IsPassword="True" />
+                    </VerticalStackLayout>
+
+                    <!-- IAR API mode fields -->
+                    <VerticalStackLayout x:Name="IarApiFields" Spacing="10" IsVisible="False">
+                        <Label Text="IAR API" FontAttributes="Bold" FontSize="16" />
+                        <Entry x:Name="IarApiBaseUrlEntry" Placeholder="Base URL (e.g. http://server:5080)" />
+                        <Entry x:Name="IarApiAgencyIdEntry" Placeholder="Agency Identifier (numeric)" Keyboard="Numeric" />
+                        <Entry x:Name="IarApiClientIdEntry" Placeholder="Client Id" />
+                        <Entry x:Name="IarApiClientSecretEntry" Placeholder="Client Secret" IsPassword="True" />
+                        <Label FontSize="12" Opacity="0.8" Text="In IAR API mode, the kiosk polls every minute for newly closed calls and prints them." />
+                    </VerticalStackLayout>
                 </VerticalStackLayout>
 
                 <!-- Printer tab -->

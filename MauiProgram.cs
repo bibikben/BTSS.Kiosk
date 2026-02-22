@@ -1,5 +1,6 @@
 ﻿using BTSS.IAR.Kiosk.DispatchEmail.Reporting;
 using BTSS.IAR.Kiosk.Services.DispatchEmail;
+using BTSS.IAR.Kiosk.Services.IarApi;
 using CommunityToolkit.Maui;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.DependencyInjection;
@@ -65,6 +66,21 @@ namespace BTSS.IAR.Kiosk
 	            builder.Services.AddSingleton<IPivotReportBuilder, PivotReportBuilder>();
 	            builder.Services.AddSingleton<IPrintService, WindowsPrintService>();
             builder.Services.AddSingleton<IEmailCheckerService, GmailImapEmailCheckerService>();
+
+            // IAR API polling pipeline (used when AppSettings.ProcessingMode == "IarApi")
+            builder.Services.AddSingleton(sp =>
+            {
+                var baseUrl = (AppSettings.IarApiBaseUrl ?? "").Trim();
+                if (string.IsNullOrWhiteSpace(baseUrl)) baseUrl = "http://localhost:5080";
+                return new HttpClient { BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/") };
+            });
+            builder.Services.AddSingleton<IarTokenProvider>();
+            builder.Services.AddSingleton<IIarApiClient, IarApiClient>();
+            builder.Services.AddSingleton<IIarPivotReportBuilder, IarPivotReportBuilder>();
+            builder.Services.AddSingleton<IIarPollingService, IarApiPollingService>();
+
+            builder.Services.AddTransient<CallsPage>();
+            builder.Services.AddTransient<AgencySetupPage>();
 #if WINDOWS
         builder.ConfigureMauiHandlers(handlers =>
         {

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="BTSS.IAR.Kiosk.AgencySetupPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    Title="Agencies"
+    Padding="12">
+
+    <Grid RowDefinitions="Auto,Auto,*" RowSpacing="10">
+
+        <HorizontalStackLayout Grid.Row="0" Spacing="10">
+            <Button Text="Refresh" Clicked="OnRefreshClicked" />
+            <Button Text="Save" Clicked="OnSaveClicked" />
+        </HorizontalStackLayout>
+
+        <Label Grid.Row="1" Text="Station coordinates are used for mileage (routing provider configured in the API)." />
+
+        <CollectionView Grid.Row="2" x:Name="AgenciesView" SelectionMode="Single">
+            <CollectionView.ItemTemplate>
+                <DataTemplate>
+                    <Frame Padding="10" Margin="0,0,0,10">
+                        <VerticalStackLayout Spacing="8">
+                            <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="8">
+                                <Label Grid.Row="0" Grid.Column="0" Text="Agency Id" VerticalOptions="Center" />
+                                <Entry Grid.Row="0" Grid.Column="1" Text="{Binding Id}" IsReadOnly="True" />
+
+                                <Label Grid.Row="1" Grid.Column="0" Text="Name" VerticalOptions="Center" />
+                                <Entry Grid.Row="1" Grid.Column="1" Text="{Binding Name}" />
+
+                                <Label Grid.Row="2" Grid.Column="0" Text="Station Lat" VerticalOptions="Center" />
+                                <Entry Grid.Row="2" Grid.Column="1" Text="{Binding StationLatitude}" Keyboard="Numeric" />
+                            </Grid>
+
+                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+                                <Label Grid.Column="0" Text="Station Lng" VerticalOptions="Center" />
+                                <Entry Grid.Column="1" Text="{Binding StationLongitude}" Keyboard="Numeric" />
+                            </Grid>
+                        </VerticalStackLayout>
+                    </Frame>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+
+    </Grid>
+</ContentPage>

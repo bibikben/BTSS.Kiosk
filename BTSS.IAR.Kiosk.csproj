@@ -81,8 +81,8 @@
 		<PackageReference Include="CommunityToolkit.Maui.Core" Version="14.0.0" />
 		<PackageReference Include="MailKit" Version="4.15.0" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.3" />
-		<PackageReference Include="Microsoft.Maui.Controls" Version="10.0.40" />
-		<PackageReference Include="Microsoft.Maui.Core" Version="10.0.40" />
+		<PackageReference Include="Microsoft.Maui.Controls" Version="10.0.41" />
+		<PackageReference Include="Microsoft.Maui.Core" Version="10.0.41" />
 		<PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3800.47" />
 		<PackageReference Include="sqlite-net-pcl" Version="1.9.172" />
 		<PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.3" />
@@ -92,7 +92,11 @@
 
 		<ItemGroup Condition="'$(TargetFramework)'=='net10.0-windows10.0.19041.0'">
   <PackageReference Include="H.NotifyIcon.Maui" Version="2.4.1" />
-</ItemGroup>		
+</ItemGroup>
+
+		<ItemGroup>
+		  <ProjectReference Include="..\BTSS.IAR.Record\BTSS.IAR.Record.csproj" />
+		</ItemGroup>		
 	
 
 	<ItemGroup>

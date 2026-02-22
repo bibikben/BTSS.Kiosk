@@ -1,6 +1,7 @@
 using System.Collections;
 using BTSS.IAR.Kiosk.Services;
 using BTSS.IAR.Kiosk.Services.DispatchEmail;
+using BTSS.IAR.Kiosk.Services.IarApi;
 using Application = Microsoft.Maui.Controls.Application;
 
 #if WINDOWS
@@ -24,15 +25,17 @@ public partial class AdminPage : ContentPage
 
     private readonly App _app;
     private readonly IEmailCheckerService _emailChecker;
+    private readonly IIarPollingService _iarPoller;
 #if WINDOWS
     private readonly IPrinterService _printerService;
 #endif
 
-    public AdminPage(App app, IEmailCheckerService emailChecker, IPrinterService printerService)
+    public AdminPage(App app, IEmailCheckerService emailChecker, IIarPollingService iarPoller, IPrinterService printerService)
     {
         InitializeComponent();
         _app = app;
         _emailChecker = emailChecker;
+        _iarPoller = iarPoller;
 
 #if WINDOWS
         _printerService = printerService;
@@ -46,6 +49,17 @@ public partial class AdminPage : ContentPage
 
         // Default tab
         SetTab("general");
+
+        // Processing mode picker
+        ProcessingModePicker.ItemsSource = new List<string> { "Email", "IarApi" };
+        ProcessingModePicker.SelectedIndexChanged += (_, __) => ApplyProcessingModeVisibility();
+    }
+
+    private void ApplyProcessingModeVisibility()
+    {
+        var mode = ProcessingModePicker.SelectedItem as string ?? "Email";
+        EmailFields.IsVisible = string.Equals(mode, "Email", StringComparison.OrdinalIgnoreCase);
+        IarApiFields.IsVisible = string.Equals(mode, "IarApi", StringComparison.OrdinalIgnoreCase);
     }
 
     private void OnTabCheckedChanged(object sender, CheckedChangedEventArgs e)
@@ -148,6 +162,15 @@ public partial class AdminPage : ContentPage
             GmailAppPasswordEntry.Text = emailSaved.AppPassword;
         }
 
+        // Processing mode + IAR API settings
+        var mode = AppSettings.ProcessingMode;
+        ProcessingModePicker.SelectedItem = (string.Equals(mode, "IarApi", StringComparison.OrdinalIgnoreCase)) ? "IarApi" : "Email";
+        IarApiBaseUrlEntry.Text = AppSettings.IarApiBaseUrl;
+        IarApiAgencyIdEntry.Text = AppSettings.IarApiAgencyId.ToString();
+        IarApiClientIdEntry.Text = AppSettings.IarApiClientId;
+        IarApiClientSecretEntry.Text = AppSettings.IarApiClientSecret;
+        ApplyProcessingModeVisibility();
+
         RegisterAdminHotKey();
 #endif
     }
@@ -209,6 +232,21 @@ public partial class AdminPage : ContentPage
             GmailAddressEntry.Text ?? "",
             GmailAppPasswordEntry.Text ?? ""));
 
+        // Save processing mode + API settings
+        var mode = (ProcessingModePicker.SelectedItem as string ?? "Email").Trim();
+        AppSettings.ProcessingMode = mode;
+        AppSettings.IarApiBaseUrl = IarApiBaseUrlEntry.Text ?? AppSettings.IarApiBaseUrl;
+        AppSettings.IarApiClientId = IarApiClientIdEntry.Text ?? "";
+        AppSettings.IarApiClientSecret = IarApiClientSecretEntry.Text ?? "";
+        if (int.TryParse(IarApiAgencyIdEntry.Text, out var agencyId))
+            AppSettings.IarApiAgencyId = agencyId;
+
+        // Start the appropriate pipeline
+        _emailChecker.Stop();
+        _iarPoller.Stop();
+        if (string.Equals(mode, "IarApi", StringComparison.OrdinalIgnoreCase))
+            _iarPoller.Start();
+        else
         _emailChecker.Start();
 
         await _app.StartDisplayAsync(
@@ -226,9 +264,31 @@ public partial class AdminPage : ContentPage
             dp.StopWatchdog();
 
         _emailChecker.Stop();
+        _iarPoller.Stop();
         _app.StopDisplayWindow();
     }
 
+    private async void OnCallsClicked(object sender, EventArgs e)
+    {
+        try
+        {
+            var page = this.Handler?.MauiContext?.Services.GetService<CallsPage>();
+            if (page != null)
+                await Navigation.PushAsync(page);
+        }
+        catch { }
+    }
+
+    private async void OnAgenciesClicked(object sender, EventArgs e)
+    {
+        try
+        {
+            var page = this.Handler?.MauiContext?.Services.GetService<AgencySetupPage>();
+            if (page != null)
+                await Navigation.PushAsync(page);
+        }
+        catch { }
+    }
     private void OnClearCredsClicked(object sender, EventArgs e)
     {
 #if WINDOWS

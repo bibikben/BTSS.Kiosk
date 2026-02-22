@@ -1,6 +1,7 @@
 ﻿using BTSS.IAR.Kiosk.Platforms.Windows.Services;
 using BTSS.IAR.Kiosk.Services;
 using BTSS.IAR.Kiosk.Services.DispatchEmail;
+using BTSS.IAR.Kiosk.Services.IarApi;
 //using Application = Microsoft.Maui.Controls.Application;
 #if WINDOWS
 using BTSS.IAR.Kiosk.Platforms.Windows;
@@ -11,11 +12,13 @@ public partial class App : Application
 {
     public Window? DisplayWindow { get; private set; }
     private readonly IEmailCheckerService _emailChecker;
-    public App(IEmailCheckerService emailChecker, IPrinterService printerService)
+    private readonly IIarPollingService _iarPoller;
+    public App(IEmailCheckerService emailChecker, IIarPollingService iarPoller, IPrinterService printerService)
     {
         InitializeComponent();
         _emailChecker = emailChecker;
-        MainPage = new NavigationPage(new AdminPage(this, emailChecker, printerService));
+        _iarPoller = iarPoller;
+        MainPage = new NavigationPage(new AdminPage(this, emailChecker, iarPoller, printerService));
     }
     public async Task TryStartDisplayFromSavedAsync(bool showAdminIfMissingConfig)
     {
@@ -35,7 +38,13 @@ public partial class App : Application
                 ShowAdminWindow();
             return;
         }
-        _emailChecker.Start();
+        // Start whichever processing pipeline is configured.
+        _emailChecker.Stop();
+        _iarPoller.Stop();
+        if (string.Equals(AppSettings.ProcessingMode, "IarApi", StringComparison.OrdinalIgnoreCase))
+            _iarPoller.Start();
+        else
+            _emailChecker.Start();
         await StartDisplayAsync(
             url: AppSettings.SavedUrl,
             agency: creds.Agency,
