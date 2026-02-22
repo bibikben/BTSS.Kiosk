@@ -95,7 +95,7 @@
 </ItemGroup>
 
 		<ItemGroup>
-		  <ProjectReference Include="..\BTSS.IAR.Record\BTSS.IAR.Record.csproj" />
+		  <ProjectReference Include="BTSS.IAR.Record\BTSS.IAR.Record.csproj" />
 		</ItemGroup>		
 	
 

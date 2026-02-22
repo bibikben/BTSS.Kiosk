@@ -91,21 +91,19 @@ public sealed class LookupUpsertService
         DbSet<TEntity> set,
         string? value,
         Func<string, TEntity> factory)
-        where TEntity : class
+        where TEntity : class, IIntIdValueLookup
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
         var v = value.Trim();
 
-        // Value lookup pattern: entity has property named "Value".
-        var existing = await set.AsQueryable().FirstOrDefaultAsync(e => EF.Property<string>(e, "Value") == v);
-        if (existing != null)
-            return EF.Property<int>(existing, "Id");
+        var existing = await set.FirstOrDefaultAsync(e => e.Value == v);
+        if (existing != null) return existing.Id;
 
         var entity = factory(v);
         set.Add(entity);
         // caller may call SaveChanges once; but for simplicity here we save immediately
         // because the handler commonly needs the Id.
         await db.SaveChangesAsync();
-        return EF.Property<int>(entity, "Id");
+        return entity.Id;
     }
 }

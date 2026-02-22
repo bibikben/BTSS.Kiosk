@@ -83,6 +83,15 @@ public class Agency
 // Lookup tables
 // -----------------------------
 
+/// <summary>
+/// Common contract for simple lookup tables that store a categorical string value.
+/// </summary>
+public interface IIntIdValueLookup
+{
+    int Id { get; set; }
+    string Value { get; set; }
+}
+
 public enum SourceSystemCode : short
 {
     IAR = 1,
@@ -96,13 +105,13 @@ public class SourceSystemEntity
     public string? Description { get; set; }
 }
 
-public class PriorityEntity
+public class PriorityEntity : IIntIdValueLookup
 {
     public int Id { get; set; }
     public string Value { get; set; } = "";
 }
 
-public class CallTypeEntity
+public class CallTypeEntity : IIntIdValueLookup
 {
     public int Id { get; set; }
     public string Value { get; set; } = "";
@@ -128,13 +137,13 @@ public class CadAgencyEntity
     public string? PrimaryContactEmail { get; set; }
 }
 
-public class CallStatusEntity
+public class CallStatusEntity : IIntIdValueLookup
 {
     public int Id { get; set; }
     public string Value { get; set; } = "";
 }
 
-public class UnitStatusEntity
+public class UnitStatusEntity : IIntIdValueLookup
 {
     public int Id { get; set; }
     public string Value { get; set; } = "";
