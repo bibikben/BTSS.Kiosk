@@ -111,6 +111,7 @@ public partial class AdminPage : ContentPage
         AutoStartSwitch.IsToggled = _autoStart.IsEnabled();
         StartDisplayOnStartupSwitch.IsToggled = AppSettings.StartDisplayOnStartup;
         StartMinimizedSwitch.IsToggled = AppSettings.StartMinimized;
+        PauseCheckingSwitch.IsToggled = AppSettings.PauseChecking;
 
         if (!_eventsWired)
         {
@@ -124,6 +125,7 @@ public partial class AdminPage : ContentPage
 
             StartDisplayOnStartupSwitch.Toggled += (_, ev) => AppSettings.StartDisplayOnStartup = ev.Value;
             StartMinimizedSwitch.Toggled += (_, ev) => AppSettings.StartMinimized = ev.Value;
+            PauseCheckingSwitch.Toggled += (_, ev) => AppSettings.PauseChecking = ev.Value;
         }
 
         // Load saved creds

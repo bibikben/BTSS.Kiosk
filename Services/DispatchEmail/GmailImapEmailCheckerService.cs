@@ -1,6 +1,7 @@
 
 using BTSS.IAR.Kiosk.DispatchEmail.Printing;
 using BTSS.IAR.Kiosk.DispatchEmail.Reporting;
+using BTSS.IAR.Kiosk.Services;
 using MailKit;
 using MailKit.Net.Imap;
 using MailKit.Search;
@@ -62,6 +63,12 @@ public class GmailImapEmailCheckerService : IEmailCheckerService
         using var timer = new PeriodicTimer(_pollEvery);
         while (!ct.IsCancellationRequested)
         {
+            if (AppSettings.PauseChecking)
+            {
+                try { await timer.WaitForNextTickAsync(ct); }
+                catch (OperationCanceledException) { break; }
+                continue;
+            }
             try
             {
                 await CheckOnceAsync(ct);

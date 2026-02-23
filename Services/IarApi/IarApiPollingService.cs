@@ -69,6 +69,8 @@ public sealed class IarApiPollingService : IIarPollingService
 
     private async Task CheckOnceAsync(CancellationToken ct)
     {
+        if (AppSettings.PauseChecking)
+            return;
         if (!string.Equals(AppSettings.ProcessingMode, "IarApi", StringComparison.OrdinalIgnoreCase))
             return;
 

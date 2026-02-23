@@ -90,6 +90,11 @@
                 <VerticalStackLayout x:Name="EmailPanel" Spacing="12" IsVisible="False">
                     <Label Text="Processing" FontAttributes="Bold" FontSize="18" />
 
+                    <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto" RowSpacing="10">
+                        <Label Grid.Row="0" Grid.Column="0" Text="Pause email/IAR checking" VerticalOptions="Center" />
+                        <Switch Grid.Row="0" Grid.Column="1" x:Name="PauseCheckingSwitch" />
+                    </Grid>
+                    <Label FontSize="12" Opacity="0.8" Text="When paused, the kiosk will not poll email or the IAR API until resumed." />
                     <Label Text="Mode" />
                     <Picker x:Name="ProcessingModePicker" Title="Select mode" />
 

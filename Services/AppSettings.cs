@@ -15,6 +15,7 @@ public static class AppSettings
     private const string IarApiAgencyIdKey = "settings.iar.api.agencyid";
     private const string IarApiClientIdKey = "settings.iar.api.clientid";
     private const string IarApiClientSecretKey = "settings.iar.api.clientsecret";
+    private const string PauseCheckingKey = "settings.processing.paused";
     public const string DefaultPrinterNameKey = "default_printer_name";
     public static bool AutoStartAtLogin
     {
@@ -85,6 +86,15 @@ public static class AppSettings
     {
         get => Preferences.Get(IarApiClientSecretKey, "");
         set => Preferences.Set(IarApiClientSecretKey, value);
+    }
+
+    /// <summary>
+    /// When true, background Email/IAR polling is paused (no mailbox/API checks are performed).
+    /// </summary>
+    public static bool PauseChecking
+    {
+        get => Preferences.Get(PauseCheckingKey, false);
+        set => Preferences.Set(PauseCheckingKey, value);
     }
 }
 
