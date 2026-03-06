@@ -35,11 +35,11 @@ public partial class CallsPage : ContentPage
                 return;
             }
 
-            var start = new DateTimeOffset(StartDatePicker.Date ?? DateTime.Now);
-            var end = new DateTimeOffset(EndDatePicker.Date?.AddDays(1).AddSeconds(-1) ?? DateTime.Now.AddDays(1).AddSeconds(-1));
+            var start = StartDatePicker.Date ?? DateTime.Now;
+            var end = EndDatePicker.Date?.AddDays(1).AddSeconds(-1) ?? DateTime.Now.AddDays(1).AddSeconds(-1);
 
             var list = await _api.GetListOfCallsAsync(agencyId, start, end, CallTypeEntry.Text, CancellationToken.None);
-            CallsView.ItemsSource = list.OrderByDescending(x => x.UpdatedAt ?? DateTimeOffset.MinValue).ToList();
+            CallsView.ItemsSource = list.OrderByDescending(x => x.UpdatedAt ?? DateTime.MinValue).ToList();
         }
         catch (Exception ex)
         {

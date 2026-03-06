@@ -10,7 +10,7 @@ internal sealed class IarTokenProvider
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     private string? _token;
-    private DateTimeOffset _expiresAt;
+    private DateTime _expiresAt;
 
     public IarTokenProvider(HttpClient http)
     {
@@ -20,13 +20,13 @@ internal sealed class IarTokenProvider
     public async Task<string> GetAccessTokenAsync(CancellationToken ct)
     {
         // Simple cache
-        if (!string.IsNullOrWhiteSpace(_token) && DateTimeOffset.UtcNow < _expiresAt.AddSeconds(-30))
+        if (!string.IsNullOrWhiteSpace(_token) && DateTime.UtcNow < _expiresAt.AddSeconds(-30))
             return _token;
 
         await _gate.WaitAsync(ct);
         try
         {
-            if (!string.IsNullOrWhiteSpace(_token) && DateTimeOffset.UtcNow < _expiresAt.AddSeconds(-30))
+            if (!string.IsNullOrWhiteSpace(_token) && DateTime.UtcNow < _expiresAt.AddSeconds(-30))
                 return _token;
 
             var clientId = AppSettings.IarApiClientId;
@@ -49,7 +49,7 @@ internal sealed class IarTokenProvider
             using var doc = JsonDocument.Parse(json);
             _token = doc.RootElement.GetProperty("access_token").GetString();
             var expiresIn = doc.RootElement.TryGetProperty("expires_in", out var ei) ? ei.GetInt32() : 3600;
-            _expiresAt = DateTimeOffset.UtcNow.AddSeconds(expiresIn);
+            _expiresAt = DateTime.UtcNow.AddSeconds(expiresIn);
 
             return _token ?? throw new InvalidOperationException("Token response missing access_token.");
         }

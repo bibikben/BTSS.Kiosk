@@ -1,5 +1,0 @@
-<Solution>
-  <Project Path="BTSS.IAR.Api/BTSS.IAR.Api.csproj" />
-  <Project Path="BTSS.IAR.Kiosk.csproj" />
-  <Project Path="BTSS.IAR.Record/BTSS.IAR.Record.csproj" />
-</Solution>

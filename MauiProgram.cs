@@ -81,6 +81,9 @@ namespace BTSS.IAR.Kiosk
 
             builder.Services.AddTransient<CallsPage>();
             builder.Services.AddTransient<AgencySetupPage>();
+            // Korzh UI (served by BTSS.IAR.Api and displayed inside the kiosk)
+            builder.Services.AddTransient<KorzhQueryPage>();
+            builder.Services.AddTransient<KorzhReportsPage>();
 #if WINDOWS
         builder.ConfigureMauiHandlers(handlers =>
         {

@@ -7,7 +7,8 @@ namespace BTSS.IAR.Kiosk.DispatchEmail.Parsing;
 
 public interface IFireStationClearReportParser
 {
-    FireStationClearReport Parse(string messageId, DateTimeOffset receivedUtc, string subject, string body);
+    FireStationClearReport Parse(string messageId, DateTime receivedUtc, string subject, string body);
+    FireStationClearReport Parse(string messageId, DateTimeOffset date, string v, string body);
 }
 
 /// <summary>
@@ -16,7 +17,7 @@ public interface IFireStationClearReportParser
 /// </summary>
 public class FireStationClearReportParser : IFireStationClearReportParser
 {
-    public FireStationClearReport Parse(string messageId, DateTimeOffset receivedUtc, string subject, string body)
+    public FireStationClearReport Parse(string messageId, DateTime receivedUtc, string subject, string body)
     {
         var report = new FireStationClearReport
         {
@@ -86,12 +87,12 @@ public class FireStationClearReportParser : IFireStationClearReportParser
                 var group = el.TryGetProperty("group", out var g) ? g.GetString() : null;
                 var status = el.TryGetProperty("status", out var s) ? s.GetString() : null;
 
-                DateTimeOffset ts = DateTimeOffset.MinValue;
+                DateTime ts = DateTime.MinValue;
                 if (el.TryGetProperty("timestamp", out var t))
                 {
                     var raw = t.GetString();
-                    if (!DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out ts))
-                        ts = DateTimeOffset.MinValue;
+                    if (!DateTime.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out ts))
+                        ts = DateTime.MinValue;
                 }
 
                 if (!string.IsNullOrWhiteSpace(unit) && !string.IsNullOrWhiteSpace(status))
@@ -101,7 +102,7 @@ public class FireStationClearReportParser : IFireStationClearReportParser
                         Unit = unit!.Trim(),
                         Group = (group ?? "").Trim(),
                         Status = status!.Trim(),
-                        TimestampUtc = ts == DateTimeOffset.MinValue ? DateTimeOffset.UtcNow : ts.ToUniversalTime()
+                        TimestampUtc = ts == DateTime.MinValue ? DateTime.UtcNow : ts.ToUniversalTime()
                     });
                 }
             }
@@ -132,8 +133,8 @@ public class FireStationClearReportParser : IFireStationClearReportParser
             var status = m.Groups["status"].Value.Trim();
             var timeRaw = m.Groups["time"].Value.Trim();
 
-            if (!DateTimeOffset.TryParse(timeRaw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var ts))
-                ts = DateTimeOffset.UtcNow;
+            if (!DateTime.TryParse(timeRaw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var ts))
+                ts = DateTime.UtcNow;
 
             if (!string.IsNullOrWhiteSpace(unit) && !string.IsNullOrWhiteSpace(status))
             {
@@ -148,5 +149,10 @@ public class FireStationClearReportParser : IFireStationClearReportParser
         }
 
         return list;
+    }
+
+    public FireStationClearReport Parse(string messageId, DateTimeOffset date, string v, string body)
+    {
+        throw new NotImplementedException();
     }
 }

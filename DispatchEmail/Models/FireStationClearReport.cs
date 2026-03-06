@@ -3,7 +3,7 @@ namespace BTSS.IAR.Kiosk.DispatchEmail.Models;
 public class FireStationClearReport
 {
     public string MessageId { get; set; } = "";
-    public DateTimeOffset ReceivedUtc { get; set; }
+    public DateTime ReceivedUtc { get; set; }
     public string Subject { get; set; } = "";
     public string RawBody { get; set; } = "";
 
@@ -19,5 +19,5 @@ public class AssignedUnitStatus
     public string Unit { get; set; } = "";
     public string Group { get; set; } = "";
     public string Status { get; set; } = "";
-    public DateTimeOffset TimestampUtc { get; set; }
+    public DateTime TimestampUtc { get; set; }
 }

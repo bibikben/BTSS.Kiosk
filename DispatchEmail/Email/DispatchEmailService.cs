@@ -126,7 +126,7 @@ public class DispatchEmailService : IDispatchEmailService
 
             var parsed = _parser.Parse(
                 messageId,
-                message.Date.ToUniversalTime(),
+                message.Date,
                 message.Subject ?? "",
                 body);
 

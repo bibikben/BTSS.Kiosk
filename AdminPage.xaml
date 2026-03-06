@@ -13,6 +13,8 @@
             <Button Text="Start" Clicked="OnStartClicked" />
             <Button Text="Stop" Clicked="OnStopClicked" />
             <Button Text="Calls" Clicked="OnCallsClicked" />
+            <Button Text="Query" Clicked="OnQueryClicked" />
+            <Button Text="Reports" Clicked="OnReportsClicked" />
             <Button Text="Agencies" Clicked="OnAgenciesClicked" />
             <Button Text="Clear Creds" Clicked="OnClearCredsClicked" />
             <Button Text="Reset Web Session" Clicked="OnResetWebSessionClicked" />

@@ -281,6 +281,28 @@ public partial class AdminPage : ContentPage
         catch { }
     }
 
+    private async void OnQueryClicked(object sender, EventArgs e)
+    {
+        try
+        {
+            var page = this.Handler?.MauiContext?.Services.GetService<KorzhQueryPage>();
+            if (page != null)
+                await Navigation.PushAsync(page);
+        }
+        catch { }
+    }
+
+    private async void OnReportsClicked(object sender, EventArgs e)
+    {
+        try
+        {
+            var page = this.Handler?.MauiContext?.Services.GetService<KorzhReportsPage>();
+            if (page != null)
+                await Navigation.PushAsync(page);
+        }
+        catch { }
+    }
+
     private async void OnAgenciesClicked(object sender, EventArgs e)
     {
         try

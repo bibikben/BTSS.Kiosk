@@ -39,7 +39,7 @@ public class ReportRepository : IReportRepository
         var entity = new ClearReportEntity
         {
             MessageId = report.MessageId,
-            ReceivedUtc = report.ReceivedUtc.UtcDateTime,
+            ReceivedUtc = report.ReceivedUtc,
             Subject = report.Subject,
             RawBody = report.RawBody,
             IncidentNumber = report.IncidentNumber,
@@ -57,7 +57,7 @@ public class ReportRepository : IReportRepository
                 Unit = s.Unit,
                 Group = s.Group,
                 Status = s.Status,
-                TimestampUtc = s.TimestampUtc.UtcDateTime
+                TimestampUtc = s.TimestampUtc
             });
         }
 

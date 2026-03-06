@@ -49,7 +49,7 @@ public class DispatchReportRepository : IDispatchReportRepository
         var entity = new DispatchClearReportEntity
         {
             MessageId = report.MessageId,
-            ReceivedUtc = report.ReceivedUtc.UtcDateTime,
+            ReceivedUtc = report.ReceivedUtc,
             DispatchTime = report.DispatchTime,
             Subject = report.Subject,
             Agency = report.Agency,
@@ -77,7 +77,7 @@ public class DispatchReportRepository : IDispatchReportRepository
                 Group = s.Group,
                 Agency = s.Agency,
                 Status = s.Status,
-                TimestampUtc = s.TimestampUtc.UtcDateTime
+                TimestampUtc = s.TimestampUtc
             });
         }
 

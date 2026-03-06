@@ -36,6 +36,7 @@
 		<CreateMSIXPackage>False</CreateMSIXPackage>
 		<AssemblyTitle>Kiosk Window Controller</AssemblyTitle>
 		<AssemblyName>BTSS Kiosk Controller</AssemblyName>
+		<Title>BTSS DIsplay</Title>
 	</PropertyGroup>
 
 	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|net10.0-windows10.0.19041.0|AnyCPU'">
@@ -67,6 +68,19 @@
 		<!-- Raw Assets (also remove the "Resources\Raw" prefix) -->
 		<MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
 	</ItemGroup>
+
+	<ItemGroup>
+	  <Compile Remove="BTSS.IAR.Api\**" />
+	  <Compile Remove="BTSS.IAR.Record\**" />
+	  <EmbeddedResource Remove="BTSS.IAR.Api\**" />
+	  <EmbeddedResource Remove="BTSS.IAR.Record\**" />
+	  <MauiCss Remove="BTSS.IAR.Api\**" />
+	  <MauiCss Remove="BTSS.IAR.Record\**" />
+	  <MauiXaml Remove="BTSS.IAR.Api\**" />
+	  <MauiXaml Remove="BTSS.IAR.Record\**" />
+	  <None Remove="BTSS.IAR.Api\**" />
+	  <None Remove="BTSS.IAR.Record\**" />
+	</ItemGroup>
 	<ItemGroup>
 		<Content Include="Resources\AppIcon\Btss.ico">
 			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -77,8 +91,8 @@
 		<EmbeddedResource Include="Resources\AppIcon\Btss.ico" />
 	</ItemGroup>
 	<ItemGroup>
-		<PackageReference Include="CommunityToolkit.Maui" Version="14.0.0" />
-		<PackageReference Include="CommunityToolkit.Maui.Core" Version="14.0.0" />
+		<PackageReference Include="CommunityToolkit.Maui" Version="14.0.1" />
+		<PackageReference Include="CommunityToolkit.Maui.Core" Version="14.0.1" />
 		<PackageReference Include="MailKit" Version="4.15.0" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.3" />
 		<PackageReference Include="Microsoft.Maui.Controls" Version="10.0.41" />
@@ -92,11 +106,7 @@
 
 		<ItemGroup Condition="'$(TargetFramework)'=='net10.0-windows10.0.19041.0'">
   <PackageReference Include="H.NotifyIcon.Maui" Version="2.4.1" />
-</ItemGroup>
-
-		<ItemGroup>
-		  <ProjectReference Include="BTSS.IAR.Record\BTSS.IAR.Record.csproj" />
-		</ItemGroup>		
+</ItemGroup>		
 	
 
 	<ItemGroup>
@@ -121,4 +131,13 @@
 		<Message Importance="high" Text="---- ApplicationDefinition items ----" />
 		<Message Importance="high" Text="@(ApplicationDefinition)" />
 	</Target>
+	<ItemGroup>
+	  <PRIResource Remove="BTSS.IAR.Api\**" />
+	</ItemGroup>
+	<ItemGroup>
+	  <PRIResource Remove="BTSS.IAR.Record\**" />
+	</ItemGroup>
+	<ItemGroup>
+	  <ProjectReference Include="..\BTSS.IAR.Record\BTSS.IAR.Record.csproj" />
+	</ItemGroup>
 </Project>

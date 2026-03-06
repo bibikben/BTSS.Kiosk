@@ -5,7 +5,8 @@ namespace BTSS.IAR.Kiosk.Services.DispatchEmail;
 
 public interface IFireStationClearReportParser
 {
-    FireStationClearReport Parse(string messageId, DateTimeOffset receivedUtc, string subject, string body);
+    FireStationClearReport Parse(string messageId, DateTime receivedUtc, string subject, string body);
+    FireStationClearReport Parse(string messageId, DateTimeOffset date, string v, string body);
 }
 
 /// <summary>
@@ -22,7 +23,7 @@ public class FireStationClearReportParser : IFireStationClearReportParser
         "M-d-yyyy HH:mm:ss"
     };
 
-    public FireStationClearReport Parse(string messageId, DateTimeOffset receivedUtc, string subject, string body)
+    public FireStationClearReport Parse(string messageId, DateTime receivedUtc, string subject, string body)
     {
         var r = new FireStationClearReport
         {
@@ -188,7 +189,7 @@ public class FireStationClearReportParser : IFireStationClearReportParser
     //            Group = group,
     //            Agency = agency,
     //            Status = status,
-    //            TimestampUtc = new DateTimeOffset(tsUtc.Value, TimeSpan.Zero)
+    //            TimestampUtc = new DateTime(tsUtc.Value, TimeSpan.Zero)
     //        });
     //    }
 
@@ -251,7 +252,7 @@ public class FireStationClearReportParser : IFireStationClearReportParser
                 Group = group,
                 Agency = agency,
                 Status = status,
-                TimestampUtc = new DateTimeOffset(dt)
+                TimestampUtc =  dt
             });
         }
 
@@ -320,5 +321,10 @@ public class FireStationClearReportParser : IFireStationClearReportParser
             return DateTime.SpecifyKind(dt, DateTimeKind.Utc);
 
         return null;
+    }
+
+    public FireStationClearReport Parse(string messageId, DateTimeOffset date, string v, string body)
+    {
+        throw new NotImplementedException();
     }
 }

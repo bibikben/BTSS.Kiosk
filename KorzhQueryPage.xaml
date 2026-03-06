@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="BTSS.IAR.Kiosk.KorzhQueryPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    Title="Query">
+
+    <Grid RowDefinitions="Auto,*" RowSpacing="8" Padding="8">
+        <HorizontalStackLayout Grid.Row="0" Spacing="10">
+            <Button Text="Back" Clicked="OnBackClicked" />
+            <Label x:Name="UrlLabel" VerticalOptions="Center" FontSize="12" Opacity="0.75" LineBreakMode="TailTruncation" />
+        </HorizontalStackLayout>
+
+        <WebView Grid.Row="1" x:Name="Web" />
+    </Grid>
+</ContentPage>

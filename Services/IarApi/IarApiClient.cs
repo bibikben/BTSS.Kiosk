@@ -9,7 +9,7 @@ public interface IIarApiClient
 {
     Task<IReadOnlyList<string>> CheckForCloseAsync(int agencyId, CancellationToken ct);
     Task<IarCallRecord?> GetCallRecordAsync(int agencyId, string callIdentifier, CancellationToken ct);
-    Task<IReadOnlyList<IarCallListItem>> GetListOfCallsAsync(int agencyId, DateTimeOffset? start, DateTimeOffset? end, string? callType, CancellationToken ct);
+    Task<IReadOnlyList<IarCallListItem>> GetListOfCallsAsync(int agencyId, DateTime? start, DateTime? end, string? callType, CancellationToken ct);
 
     Task<IReadOnlyList<AgencyDto>> GetAgenciesAsync(CancellationToken ct);
     Task<bool> UpsertAgencyAsync(AgencyDto agency, CancellationToken ct);
@@ -20,7 +20,7 @@ public record IarCallListItem(
     string? Type,
     string? Address,
     bool Closed,
-    DateTimeOffset? UpdatedAt
+    DateTime? UpdatedAt
 );
 
 public record AgencyDto(
@@ -67,7 +67,7 @@ internal sealed class IarApiClient : IIarApiClient
         return JsonSerializer.Deserialize<IarCallRecord>(json, JsonOptions);
     }
 
-    public async Task<IReadOnlyList<IarCallListItem>> GetListOfCallsAsync(int agencyId, DateTimeOffset? start, DateTimeOffset? end, string? callType, CancellationToken ct)
+    public async Task<IReadOnlyList<IarCallListItem>> GetListOfCallsAsync(int agencyId, DateTime? start, DateTime? end, string? callType, CancellationToken ct)
     {
         await AuthorizeAsync(ct);
 
