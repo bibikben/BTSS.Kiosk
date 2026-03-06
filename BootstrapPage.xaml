@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="BTSS.IAR.Kiosk.BootstrapPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    Title="Kiosk Bootstrap"
+    Padding="16">
+
+    <ScrollView>
+        <VerticalStackLayout Spacing="14">
+            <Label Text="BTSS Kiosk Display" FontSize="28" FontAttributes="Bold" />
+            <Label Text="Epic 1 boundary realignment: this project is now display/bootstrap only." FontSize="13" Opacity="0.8" />
+
+            <Border StrokeThickness="1" Padding="12">
+                <VerticalStackLayout Spacing="8">
+                    <Label Text="Local Device" FontAttributes="Bold" FontSize="18" />
+                    <Label x:Name="DeviceIdLabel" />
+                    <Label x:Name="MachineNameLabel" />
+                    <Label x:Name="UserLabel" />
+                    <Label x:Name="VersionLabel" />
+                </VerticalStackLayout>
+            </Border>
+
+            <Border StrokeThickness="1" Padding="12">
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="Display Bootstrap" FontAttributes="Bold" FontSize="18" />
+                    <Entry x:Name="UrlEntry" Placeholder="https://auth.iamresponding.com/login/member" />
+                    <Entry x:Name="AgencyEntry" Placeholder="Agency" />
+                    <Entry x:Name="UserEntry" Placeholder="Username" />
+                    <Entry x:Name="PassEntry" Placeholder="Password" IsPassword="True" />
+                    <Label Text="Monitor" />
+                    <Picker x:Name="MonitorPicker" Title="Select monitor" />
+                    <HorizontalStackLayout Spacing="10">
+                        <Button Text="Start Display" Clicked="OnStartDisplayClicked" />
+                        <Button Text="Use Saved Settings" Clicked="OnUseSavedClicked" />
+                        <Button Text="Clear Saved Credentials" Clicked="OnClearClicked" />
+                    </HorizontalStackLayout>
+                </VerticalStackLayout>
+            </Border>
+
+            <Border StrokeThickness="1" Padding="12">
+                <VerticalStackLayout Spacing="8">
+                    <Label Text="Boundary Notes" FontAttributes="Bold" FontSize="18" />
+                    <Label Text="• Reporting, queries, and admin workflows move to BTSS.IAR." />
+                    <Label Text="• Background polling and print orchestration move to BTSS.Service." />
+                    <Label Text="• Shared contracts live in BTSS.IAR.Record." />
+                    <Label Text="• This kiosk keeps only bootstrap, session handling, and display rendering." />
+                </VerticalStackLayout>
+            </Border>
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

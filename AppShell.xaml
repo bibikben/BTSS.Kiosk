@@ -7,8 +7,8 @@
     Title="BTSS.IAR.Kiosk">
 
     <ShellContent
-        Title="Home"
-        ContentTemplate="{DataTemplate local:MainPage}"
-        Route="MainPage" />
+        Title="Bootstrap"
+        ContentTemplate="{DataTemplate local:BootstrapPage}"
+        Route="BootstrapPage" />
 
 </Shell>

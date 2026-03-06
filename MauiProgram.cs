@@ -70,7 +70,7 @@ namespace BTSS.IAR.Kiosk
             // IAR API polling pipeline (used when AppSettings.ProcessingMode == "IarApi")
             builder.Services.AddSingleton(sp =>
             {
-                var baseUrl = (AppSettings.IarApiBaseUrl ?? "").Trim();
+                var baseUrl = (Services.AppSettings.IarApiBaseUrl ?? "").Trim();
                 if (string.IsNullOrWhiteSpace(baseUrl)) baseUrl = "http://localhost:5080";
                 return new HttpClient { BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/") };
             });
@@ -79,11 +79,6 @@ namespace BTSS.IAR.Kiosk
             builder.Services.AddSingleton<IIarPivotReportBuilder, IarPivotReportBuilder>();
             builder.Services.AddSingleton<IIarPollingService, IarApiPollingService>();
 
-            builder.Services.AddTransient<CallsPage>();
-            builder.Services.AddTransient<AgencySetupPage>();
-            // Korzh UI (served by BTSS.IAR.Api and displayed inside the kiosk)
-            builder.Services.AddTransient<KorzhQueryPage>();
-            builder.Services.AddTransient<KorzhReportsPage>();
 #if WINDOWS
         builder.ConfigureMauiHandlers(handlers =>
         {
@@ -133,12 +128,12 @@ namespace BTSS.IAR.Kiosk
 
                     tray?.Initialize(hwnd);
 
-                    if (AppSettings.StartMinimized || RuntimeFlags.IsAutoStartInvocation)
+                        if (Services.AppSettings.StartMinimized || RuntimeFlags.IsAutoStartInvocation)
                     {
                         MainThread.BeginInvokeOnMainThread(() => tray?.HideAdmin());
                     }
 
-                    if (AppSettings.StartDisplayOnStartup && AppSettings.SelectedMonitorIndex >= 0)
+                        if (Services.AppSettings.StartDisplayOnStartup && Services.AppSettings.SelectedMonitorIndex >= 0)
                     {
                         MainThread.BeginInvokeOnMainThread(async () =>
                         {

@@ -1,143 +1,90 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>BTSS.IAR.Kiosk</RootNamespace>
+    <UseMaui>true</UseMaui>
+    <SingleProject>true</SingleProject>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TargetFrameworks>net10.0-windows10.0.19041.0</TargetFrameworks>
+    <ApplicationTitle>BTSS.IAR.Kiosk</ApplicationTitle>
+    <ApplicationId>com.companyname.btss.iar.kiosk</ApplicationId>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <ApplicationVersion>1</ApplicationVersion>
+    <WindowsPackageType>None</WindowsPackageType>
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <CreateMSIXPackage>False</CreateMSIXPackage>
+    <AssemblyTitle>Kiosk Display Shell</AssemblyTitle>
+    <AssemblyName>BTSS Kiosk Display</AssemblyName>
+    <Title>BTSS Display</Title>
+  </PropertyGroup>
 
+  <ItemGroup>
+    <MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#512BD4" />
+    <MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#512BD4" BaseSize="128,128" />
+    <MauiImage Include="Resources\Images\*" />
+    <MauiImage Update="Resources\Images\dotnet_bot.png" Resize="True" BaseSize="300,185" />
+    <MauiFont Include="Resources\Fonts\*" />
+    <MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
 
+  <ItemGroup>
+    <Compile Remove="AdminPage.xaml.cs" />
+    <Compile Remove="AgencySetupPage.xaml.cs" />
+    <Compile Remove="CallsPage.xaml.cs" />
+    <Compile Remove="KorzhQueryPage.xaml.cs" />
+    <Compile Remove="KorzhReportsPage.xaml.cs" />
+    <Compile Remove="MainPage.xaml.cs" />
+    <MauiXaml Remove="AdminPage.xaml" />
+    <MauiXaml Remove="AgencySetupPage.xaml" />
+    <MauiXaml Remove="CallsPage.xaml" />
+    <MauiXaml Remove="KorzhQueryPage.xaml" />
+    <MauiXaml Remove="KorzhReportsPage.xaml" />
+    <MauiXaml Remove="MainPage.xaml" />
+  </ItemGroup>
 
-	<PropertyGroup>
-		
+  <ItemGroup>
+    <Content Include="Resources\AppIcon\Btss.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <EmbeddedResource Include="Resources\AppIcon\Btss.ico" />
+  </ItemGroup>
 
-		<!-- Note for MacCatalyst:
-		The default runtime is maccatalyst-x64, except in Release config, in which case the default is maccatalyst-x64;maccatalyst-arm64.
-		When specifying both architectures, use the plural <RuntimeIdentifiers> instead of the singular <RuntimeIdentifier>.
-		The Mac App Store will NOT accept apps with ONLY maccatalyst-arm64 indicated;
-		either BOTH runtimes must be indicated or ONLY macatalyst-x64. -->
-		<!-- For example: <RuntimeIdentifiers>maccatalyst-x64;maccatalyst-arm64</RuntimeIdentifiers> -->
-		<OutputType>WinExe</OutputType>
-		<RootNamespace>BTSS.IAR.Kiosk</RootNamespace>
-		<UseMaui>true</UseMaui>
-		<SingleProject>true</SingleProject>
-		<ImplicitUsings>enable</ImplicitUsings>
-		<Nullable>enable</Nullable>
-		<TargetFrameworks>net10.0-windows10.0.19041.0</TargetFrameworks>
-		<!-- Display name -->
-		<ApplicationTitle>BTSS.IAR.Kiosk</ApplicationTitle>
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Maui" Version="14.0.1" />
+    <PackageReference Include="CommunityToolkit.Maui.Core" Version="14.0.1" />
+    <PackageReference Include="MailKit" Version="4.15.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.3" />
+    <PackageReference Include="Microsoft.Maui.Controls" Version="10.0.41" />
+    <PackageReference Include="Microsoft.Maui.Core" Version="10.0.41" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3800.47" />
+    <PackageReference Include="sqlite-net-pcl" Version="1.9.172" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.3" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.3" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.3" />
+    <PackageReference Include="H.NotifyIcon.Maui" Version="2.4.1" Condition="'$(TargetFramework)'=='net10.0-windows10.0.19041.0'" />
+  </ItemGroup>
 
-		<!-- App Identifier -->
-		<ApplicationId>com.companyname.btss.iar.kiosk</ApplicationId>
+  <ItemGroup>
+    <Compile Update="DisplayPage.xaml.cs">
+      <DependentUpon>DisplayPage.xaml</DependentUpon>
+    </Compile>
+    <Compile Update="BootstrapPage.xaml.cs">
+      <DependentUpon>BootstrapPage.xaml</DependentUpon>
+    </Compile>
+    <Compile Update="Properties\Settings.Designer.cs">
+      <DesignTimeSharedInput>True</DesignTimeSharedInput>
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Settings.settings</DependentUpon>
+    </Compile>
+  </ItemGroup>
 
-		<!-- Versions -->
-		<ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
-		<ApplicationVersion>1</ApplicationVersion>
-
-		<!-- To develop, package, and publish an app to the Microsoft Store, see: https://aka.ms/MauiTemplateUnpackaged -->
-		<WindowsPackageType>None</WindowsPackageType>
-
-		<SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
-		<TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
-		<CreateMSIXPackage>False</CreateMSIXPackage>
-		<AssemblyTitle>Kiosk Window Controller</AssemblyTitle>
-		<AssemblyName>BTSS Kiosk Controller</AssemblyName>
-		<Title>BTSS DIsplay</Title>
-	</PropertyGroup>
-
-	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Debug|net10.0-windows10.0.19041.0|AnyCPU'">
-		<ApplicationTitle>BTSS Kiosk Controller</ApplicationTitle>
-		<ApplicationIdGuid>051B5FD5-2AE1-4E8F-9C47-15B379544952</ApplicationIdGuid>
-		<ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
-	</PropertyGroup>
-
-	<PropertyGroup Condition="'$(Configuration)|$(TargetFramework)|$(Platform)'=='Release|net10.0-windows10.0.19041.0|AnyCPU'">
-		<ApplicationTitle>BTSS Kiosk Controller</ApplicationTitle>
-		<ApplicationIdGuid>051B5FD5-2AE1-4E8F-9C47-15B379544952</ApplicationIdGuid>
-		<ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
-	</PropertyGroup>
-
-	<ItemGroup>
-		<!-- App Icon -->
-		<MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#512BD4" />
-
-		<!-- Splash Screen -->
-		<MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#512BD4" BaseSize="128,128" />
-
-		<!-- Images -->
-		<MauiImage Include="Resources\Images\*" />
-		<MauiImage Update="Resources\Images\dotnet_bot.png" Resize="True" BaseSize="300,185" />
-
-		<!-- Custom Fonts -->
-		<MauiFont Include="Resources\Fonts\*" />
-
-		<!-- Raw Assets (also remove the "Resources\Raw" prefix) -->
-		<MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
-	</ItemGroup>
-
-	<ItemGroup>
-	  <Compile Remove="BTSS.IAR.Api\**" />
-	  <Compile Remove="BTSS.IAR.Record\**" />
-	  <EmbeddedResource Remove="BTSS.IAR.Api\**" />
-	  <EmbeddedResource Remove="BTSS.IAR.Record\**" />
-	  <MauiCss Remove="BTSS.IAR.Api\**" />
-	  <MauiCss Remove="BTSS.IAR.Record\**" />
-	  <MauiXaml Remove="BTSS.IAR.Api\**" />
-	  <MauiXaml Remove="BTSS.IAR.Record\**" />
-	  <None Remove="BTSS.IAR.Api\**" />
-	  <None Remove="BTSS.IAR.Record\**" />
-	</ItemGroup>
-	<ItemGroup>
-		<Content Include="Resources\AppIcon\Btss.ico">
-			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-		</Content>
-	</ItemGroup>
-
-	<ItemGroup>
-		<EmbeddedResource Include="Resources\AppIcon\Btss.ico" />
-	</ItemGroup>
-	<ItemGroup>
-		<PackageReference Include="CommunityToolkit.Maui" Version="14.0.1" />
-		<PackageReference Include="CommunityToolkit.Maui.Core" Version="14.0.1" />
-		<PackageReference Include="MailKit" Version="4.15.0" />
-		<PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.3" />
-		<PackageReference Include="Microsoft.Maui.Controls" Version="10.0.41" />
-		<PackageReference Include="Microsoft.Maui.Core" Version="10.0.41" />
-		<PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3800.47" />
-		<PackageReference Include="sqlite-net-pcl" Version="1.9.172" />
-		<PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.3" />
-		<PackageReference Include="System.Drawing.Common" Version="10.0.3" />
-		<PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.3" />
-	</ItemGroup>
-
-		<ItemGroup Condition="'$(TargetFramework)'=='net10.0-windows10.0.19041.0'">
-  <PackageReference Include="H.NotifyIcon.Maui" Version="2.4.1" />
-</ItemGroup>		
-	
-
-	<ItemGroup>
-		<Compile Update="DisplayPage.xaml.cs">
-			<DependentUpon>DisplayPage.xaml</DependentUpon>
-		</Compile>
-		<Compile Update="Properties\Settings.Designer.cs">
-			<DesignTimeSharedInput>True</DesignTimeSharedInput>
-			<AutoGen>True</AutoGen>
-			<DependentUpon>Settings.settings</DependentUpon>
-		</Compile>
-	</ItemGroup>
-	<ItemGroup>
-		<None Update="Properties\Settings.settings">
-			<Generator>SettingsSingleFileGenerator</Generator>
-			<LastGenOutput>Settings.Designer.cs</LastGenOutput>
-		</None>
-	</ItemGroup>
-	<Target Name="ShowItems" AfterTargets="PrepareForBuild">
-		<Message Importance="high" Text="---- Page items ----" />
-		<Message Importance="high" Text="@(Page)" />
-		<Message Importance="high" Text="---- ApplicationDefinition items ----" />
-		<Message Importance="high" Text="@(ApplicationDefinition)" />
-	</Target>
-	<ItemGroup>
-	  <PRIResource Remove="BTSS.IAR.Api\**" />
-	</ItemGroup>
-	<ItemGroup>
-	  <PRIResource Remove="BTSS.IAR.Record\**" />
-	</ItemGroup>
-	<ItemGroup>
-	  <ProjectReference Include="..\BTSS.IAR.Record\BTSS.IAR.Record.csproj" />
-	</ItemGroup>
+  <ItemGroup>
+    <None Update="Properties\Settings.settings">
+      <Generator>SettingsSingleFileGenerator</Generator>
+      <LastGenOutput>Settings.Designer.cs</LastGenOutput>
+    </None>
+    <ProjectReference Include="..\BTSS.IAR.Record\BTSS.IAR.Record.csproj" />
+  </ItemGroup>
 </Project>

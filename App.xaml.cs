@@ -1,11 +1,12 @@
-﻿using BTSS.IAR.Kiosk.Platforms.Windows.Services;
+using BTSS.IAR.Kiosk.Platforms.Windows.Services;
 using BTSS.IAR.Kiosk.Services;
 using BTSS.IAR.Kiosk.Services.DispatchEmail;
 using BTSS.IAR.Kiosk.Services.IarApi;
-//using Application = Microsoft.Maui.Controls.Application;
+
 #if WINDOWS
 using BTSS.IAR.Kiosk.Platforms.Windows;
 #endif
+
 namespace BTSS.IAR.Kiosk;
 
 public partial class App : Application
@@ -13,17 +14,18 @@ public partial class App : Application
     public Window? DisplayWindow { get; private set; }
     private readonly IEmailCheckerService _emailChecker;
     private readonly IIarPollingService _iarPoller;
+
     public App(IEmailCheckerService emailChecker, IIarPollingService iarPoller, IPrinterService printerService)
     {
         InitializeComponent();
         _emailChecker = emailChecker;
         _iarPoller = iarPoller;
-        MainPage = new NavigationPage(new AdminPage(this, emailChecker, iarPoller, printerService));
+        MainPage = new NavigationPage(new BootstrapPage(this));
     }
+
     public async Task TryStartDisplayFromSavedAsync(bool showAdminIfMissingConfig)
     {
 #if WINDOWS
-        // Need credentials + saved URL + saved monitor
         var creds = await CredentialStore.LoadAsync();
         if (creds == null || string.IsNullOrWhiteSpace(creds.Agency) || string.IsNullOrWhiteSpace(creds.Username))
         {
@@ -38,13 +40,14 @@ public partial class App : Application
                 ShowAdminWindow();
             return;
         }
-        // Start whichever processing pipeline is configured.
+
         _emailChecker.Stop();
         _iarPoller.Stop();
         if (string.Equals(AppSettings.ProcessingMode, "IarApi", StringComparison.OrdinalIgnoreCase))
             _iarPoller.Start();
         else
             _emailChecker.Start();
+
         await StartDisplayAsync(
             url: AppSettings.SavedUrl,
             agency: creds.Agency,
@@ -59,11 +62,19 @@ public partial class App : Application
 #if WINDOWS
         if (Windows.Count > 0)
         {
-            // Attempt to show/activate main window
             var tray = Windows[0].Handler?.MauiContext?.Services.GetService<ITrayService>();
             tray?.ShowAdmin();
         }
 #endif
+
+        if (MainPage is NavigationPage nav)
+        {
+            _ = MainThread.InvokeOnMainThreadAsync(async () =>
+            {
+                if (nav.Navigation.NavigationStack.LastOrDefault() is not BootstrapPage)
+                    await nav.PushAsync(new BootstrapPage(this));
+            });
+        }
     }
 
     public DisplayPage StartDisplayWindow()
@@ -81,8 +92,6 @@ public partial class App : Application
     public async Task StartDisplayAsync(string url, string agency, string username, string password, int monitorIndex)
     {
         var displayPage = StartDisplayWindow();
-
-        // Give MAUI a moment to create native window
         await Task.Delay(150);
 
         var monitors = MonitorService.GetMonitors();
@@ -94,14 +103,10 @@ public partial class App : Application
         }
 
         displayPage.StartWatchdog();
-
-        await displayPage.NavigateAndLoginIfNeededAsync(
-            url,
-            agency,
-            username,
-            password);
+        await displayPage.NavigateAndLoginIfNeededAsync(url, agency, username, password);
     }
 #endif
+
     public void StopDisplayWindow()
     {
         if (DisplayWindow == null) return;
