@@ -88,13 +88,13 @@ public sealed class IarApiPollingService : IIarPollingService
         }
     }
 
-    private async Task PrintRecordAsync(IarCallRecord record)
+    private async Task PrintRecordAsync(EmergencyCallUnified record)
     {
         PivotTableResult pivot = _pivot.Build(record);
-        var id = record.Details?.Id ?? "(unknown)";
-        var type = record.Headers?.Type ?? "";
-        var addr = record.Headers?.Address ?? "";
-        var updated = record.Details?.UpdatedAt ?? record.Details?.UpdatedAtISO;
+        var id = record.GetCallIdentifier() ?? "(unknown)";
+        var type = record.GetCallType() ?? "";
+        var addr = record.GetAddress() ?? "";
+        var updated = record.GetUpdatedAtUtc();
 
         var title = $"IAR Close Record  {(updated?.ToLocalTime().ToString("MM-dd-yyyy HH:mm:ss") ?? "")}  ID: {id}";
         var footer = $"Type: {type}  Address: {addr}";

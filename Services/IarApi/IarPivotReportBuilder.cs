@@ -5,7 +5,7 @@ namespace BTSS.IAR.Kiosk.Services.IarApi;
 
 public interface IIarPivotReportBuilder
 {
-    PivotTableResult Build(IarCallRecord record);
+    PivotTableResult Build(EmergencyCallUnified record);
 }
 
 public sealed class IarPivotReportBuilder : IIarPivotReportBuilder
@@ -15,9 +15,9 @@ public sealed class IarPivotReportBuilder : IIarPivotReportBuilder
         "DP", "ER", "OS", "TR", "TC", "AM"
     };
 
-    public PivotTableResult Build(IarCallRecord record)
+    public PivotTableResult Build(EmergencyCallUnified record)
     {
-        var units = record.Units ?? Array.Empty<IarUnit>();
+        var units = record.Units ?? Array.Empty<Unit>();
 
         // Columns in the order you specified (and used elsewhere)
         var cols = new List<string> { "DP", "ER", "OS", "TR", "TC", "AM" };
@@ -35,11 +35,11 @@ public sealed class IarPivotReportBuilder : IIarPivotReportBuilder
 
             foreach (var u in g)
             {
-                var status = (u.StatusOriginal ?? u.Status ?? "").Trim().ToUpperInvariant();
+                var status = u.NormalizeUnitStatus();
                 if (!AllowedStatuses.Contains(status))
                     continue; // exclude CU + anything else
 
-                var ts = u.CreatedAt ?? u.CreatedAtISO;
+                var ts = u.GetBestTimestampUtc();
                 if (ts == null) continue;
 
                 // Keep the latest time for that status
@@ -52,8 +52,8 @@ public sealed class IarPivotReportBuilder : IIarPivotReportBuilder
                     // Compare by actual timestamp (we'll re-parse HH:mm only if needed)
                     var candidate = ts.Value;
                     var latest = g
-                        .Where(x => string.Equals((x.StatusOriginal ?? x.Status ?? "").Trim(), status, StringComparison.OrdinalIgnoreCase))
-                        .Select(x => x.CreatedAt ?? x.CreatedAtISO)
+                        .Where(x => string.Equals(x.NormalizeUnitStatus(), status, StringComparison.OrdinalIgnoreCase))
+                        .Select(x => x.GetBestTimestampUtc())
                         .Where(x => x != null)
                         .Max();
                     if (latest != null)

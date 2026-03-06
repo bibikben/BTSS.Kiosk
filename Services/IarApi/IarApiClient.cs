@@ -8,7 +8,7 @@ namespace BTSS.IAR.Kiosk.Services.IarApi;
 public interface IIarApiClient
 {
     Task<IReadOnlyList<string>> CheckForCloseAsync(int agencyId, CancellationToken ct);
-    Task<IarCallRecord?> GetCallRecordAsync(int agencyId, string callIdentifier, CancellationToken ct);
+    Task<EmergencyCallUnified?> GetCallRecordAsync(int agencyId, string callIdentifier, CancellationToken ct);
     Task<IReadOnlyList<IarCallListItem>> GetListOfCallsAsync(int agencyId, DateTime? start, DateTime? end, string? callType, CancellationToken ct);
 
     Task<IReadOnlyList<AgencyDto>> GetAgenciesAsync(CancellationToken ct);
@@ -55,7 +55,7 @@ internal sealed class IarApiClient : IIarApiClient
         return arr.EnumerateArray().Select(x => x.GetString() ?? "").Where(s => s.Length > 0).ToList();
     }
 
-    public async Task<IarCallRecord?> GetCallRecordAsync(int agencyId, string callIdentifier, CancellationToken ct)
+    public async Task<EmergencyCallUnified?> GetCallRecordAsync(int agencyId, string callIdentifier, CancellationToken ct)
     {
         await AuthorizeAsync(ct);
 
@@ -64,7 +64,7 @@ internal sealed class IarApiClient : IIarApiClient
         if (!resp.IsSuccessStatusCode) return null;
 
         var json = await resp.Content.ReadAsStringAsync(ct);
-        return JsonSerializer.Deserialize<IarCallRecord>(json, JsonOptions);
+        return EmergencyCallUnifiedJson.Deserialize(json);
     }
 
     public async Task<IReadOnlyList<IarCallListItem>> GetListOfCallsAsync(int agencyId, DateTime? start, DateTime? end, string? callType, CancellationToken ct)
