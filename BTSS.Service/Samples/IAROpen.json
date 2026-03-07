@@ -1,0 +1,70 @@
+{
+  "headers": {
+    "address": "114 FORD AVE 13207 SYR",
+    "type": "Vehicle Accident",
+    "priority": "1",
+    "latitude": 43.013554,
+    "longitude": -76.157436,
+    "coordinates": "43.013554,-76.157436",
+    "approximatedLocation": false
+  },
+  "details": {
+    "id": "1771542738",
+    "agency": "City Fire & EMS",
+    "createdAtISO": "2026-02-19T23:12:18.399746",
+    "createdAt": "2026-02-19T18:12:18.399757-05:00",
+    "closed": false,
+    "status": "Open",
+    "source": "fake-incident-sender",
+    "dispatchedAt": "2026-02-19T18:12:33.578226-05:00",
+    "updatedAtISO": "2026-02-19T23:12:45.762886",
+    "updatedAt": "2026-02-19T18:12:45.762889-05:00"
+  },
+  "callers": [
+    {
+      "name": "Mike Price",
+      "phoneNumber": "555-555-1234"
+    }
+  ],
+  "units": [
+    {
+      "id": "Rescue 2",
+      "status": "dispatched",
+      "createdAtISO": "2026-02-19T23:12:33.578204",
+      "createdAt": "2026-02-19T18:12:33.578226-05:00",
+      "statusOriginal": "dp"
+    },
+    {
+      "id": "Engine 6",
+      "status": "dispatched",
+      "createdAtISO": "2026-02-19T23:12:33.578270",
+      "createdAt": "2026-02-19T18:12:33.578272-05:00",
+      "statusOriginal": "dp"
+    },
+    {
+      "id": "Medic 17",
+      "status": "dispatched",
+      "createdAtISO": "2026-02-19T23:12:33.578282",
+      "createdAt": "2026-02-19T18:12:33.578283-05:00",
+      "statusOriginal": "dp"
+    }
+  ],
+  "comments": [
+    {
+      "message": "911 call received reporting a vehicle accident on Highway 101. Caller reports multiple vehicles involved.",
+      "createdAtISO": "2026-02-19T23:12:45.762833",
+      "createdAt": "2026-02-19T18:12:45.762848-05:00"
+    }
+  ],
+  "plainText": "Incident: \n\tNature: : Vehicle Accident\n\tAddress: : 114 FORD AVE 13207 SYR\n\tPriority: : 1\n\tCoordinates: : 43.013554,-76.157436\n\tID: : 1771542738\nUnits: Rescue 2, Engine 6, Medic 17\nComments: \n\tmessage: 911 call received reporting a vehicle accident on Highway 101. Caller reports multiple vehicles involved.\n\tcreatedAt: 2026-02-19T18:12:45.762848-05:00\n",
+  "hash": "xKGOHzzAsIOZ+5viriCcBUm2YB9TdBZAOkt0i4EopZw=",
+  "timestamp": "2026-02-19T23:12:45",
+  "filePath": "cad-incidents/6786e16a19222e52b33d9fb2/66467c31d3df3fa63cd1c8e1/2026/02/19/2312458612",
+  "groupedUnits": {
+    "dispatched": [
+      "Rescue 2",
+      "Engine 6",
+      "Medic 17"
+    ]
+  }
+}

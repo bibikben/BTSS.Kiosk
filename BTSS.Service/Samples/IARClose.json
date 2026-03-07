@@ -1,0 +1,183 @@
+{
+  "headers": {
+    "address": "5586 LEGIONNAIRE DR 13039 TCI: ",
+    "locationName": "CICERO HEALTH CENTER",
+    "type": "House Fire",
+    "priority": "1",
+    "latitude": 43.175537,
+    "longitude": -76.133244,
+    "coordinates": "43.175537,-76.133244",
+    "approximatedLocation": false
+  },
+  "details": {
+    "id": "1771544779",
+    "agency": "City Fire & EMS",
+    "createdAtISO": "2026-02-19T23:46:19.530801",
+    "createdAt": "2026-02-19T18:46:19.530813-05:00",
+    "closed": true,
+    "status": "Closed",
+    "source": "fake-incident-sender",
+    "dispatchedAt": "2026-02-19T18:46:32.719895-05:00",
+    "updatedAtISO": "2026-02-19T23:50:51.266943",
+    "updatedAt": "2026-02-19T18:50:51.266960-05:00"
+  },
+  "callers": [
+    {
+      "name": "Tyler Price",
+      "phoneNumber": "555-555-1234"
+    }
+  ],
+  "units": [
+    {
+      "id": "Engine 1",
+      "status": "dispatched",
+      "createdAtISO": "2026-02-19T23:46:32.719880",
+      "createdAt": "2026-02-19T18:46:32.719895-05:00",
+      "statusOriginal": "dp"
+    },
+    {
+      "id": "Engine 2",
+      "status": "dispatched",
+      "createdAtISO": "2026-02-19T23:46:32.719938",
+      "createdAt": "2026-02-19T18:46:32.719940-05:00",
+      "statusOriginal": "dp"
+    },
+    {
+      "id": "Ladder 1",
+      "status": "dispatched",
+      "createdAtISO": "2026-02-19T23:46:32.719951",
+      "createdAt": "2026-02-19T18:46:32.719953-05:00",
+      "statusOriginal": "dp"
+    },
+    {
+      "id": "Medic 12",
+      "status": "dispatched",
+      "createdAtISO": "2026-02-19T23:46:32.719962",
+      "createdAt": "2026-02-19T18:46:32.719964-05:00",
+      "statusOriginal": "dp"
+    },
+    {
+      "id": "Ladder 1",
+      "status": "enroute",
+      "createdAtISO": "2026-02-19T23:47:03.850773",
+      "createdAt": "2026-02-19T18:47:03.850792-05:00",
+      "statusOriginal": "er"
+    },
+    {
+      "id": "Engine 1",
+      "status": "enroute",
+      "createdAtISO": "2026-02-19T23:47:07.011473",
+      "createdAt": "2026-02-19T18:47:07.011490-05:00",
+      "statusOriginal": "er"
+    },
+    {
+      "id": "Medic 12",
+      "status": "enroute",
+      "createdAtISO": "2026-02-19T23:47:24.200923",
+      "createdAt": "2026-02-19T18:47:24.200939-05:00",
+      "statusOriginal": "er"
+    },
+    {
+      "id": "Engine 2",
+      "status": "enroute",
+      "createdAtISO": "2026-02-19T23:47:29.710141",
+      "createdAt": "2026-02-19T18:47:29.710180-05:00",
+      "statusOriginal": "er"
+    },
+    {
+      "id": "Ladder 1",
+      "status": "onScene",
+      "createdAtISO": "2026-02-19T23:47:40.892806",
+      "createdAt": "2026-02-19T18:47:40.892822-05:00",
+      "statusOriginal": "os"
+    },
+    {
+      "id": "Medic 12",
+      "status": "onScene",
+      "createdAtISO": "2026-02-19T23:48:18.255846",
+      "createdAt": "2026-02-19T18:48:18.255863-05:00",
+      "statusOriginal": "os"
+    },
+    {
+      "id": "Engine 1",
+      "status": "onScene",
+      "createdAtISO": "2026-02-19T23:48:43.445606",
+      "createdAt": "2026-02-19T18:48:43.445623-05:00",
+      "statusOriginal": "os"
+    },
+    {
+      "id": "Engine 2",
+      "status": "onScene",
+      "createdAtISO": "2026-02-19T23:49:23.660863",
+      "createdAt": "2026-02-19T18:49:23.660879-05:00",
+      "statusOriginal": "os"
+    },
+    {
+      "id": "Ladder 1",
+      "status": "available",
+      "createdAtISO": "2026-02-19T23:49:51.815276",
+      "createdAt": "2026-02-19T18:49:51.815293-05:00",
+      "statusOriginal": "av"
+    },
+    {
+      "id": "Medic 12",
+      "status": "available",
+      "createdAtISO": "2026-02-19T23:50:22.006071",
+      "createdAt": "2026-02-19T18:50:22.006087-05:00",
+      "statusOriginal": "av"
+    },
+    {
+      "id": "Engine 1",
+      "status": "available",
+      "createdAtISO": "2026-02-19T23:50:34.191314",
+      "createdAt": "2026-02-19T18:50:34.191331-05:00",
+      "statusOriginal": "av"
+    },
+    {
+      "id": "Engine 2",
+      "status": "available",
+      "createdAtISO": "2026-02-19T23:50:48.367205",
+      "createdAt": "2026-02-19T18:50:48.367222-05:00",
+      "statusOriginal": "av"
+    }
+  ],
+  "comments": [
+    {
+      "message": "Fire under control. Primary search complete. No occupants found inside. Secondary search in progress.",
+      "createdAtISO": "2026-02-19T23:48:07.343512",
+      "createdAt": "2026-02-19T18:48:07.343528-05:00"
+    },
+    {
+      "message": "EMS treating multiple patients for smoke inhalation. Additional ambulances requested for transport.",
+      "createdAtISO": "2026-02-19T23:47:42.110871",
+      "createdAt": "2026-02-19T18:47:42.110887-05:00"
+    },
+    {
+      "message": "Firefighters on scene confirm active fire. Requesting additional units for backup and evacuation.",
+      "createdAtISO": "2026-02-19T23:47:26.540829",
+      "createdAt": "2026-02-19T18:47:26.540845-05:00"
+    },
+    {
+      "message": "Dispatched fire department and EMS. Caller states occupants may still be inside.",
+      "createdAtISO": "2026-02-19T23:46:57.689212",
+      "createdAt": "2026-02-19T18:46:57.689230-05:00"
+    },
+    {
+      "message": "911 call received reporting a house fire. Caller reports smoke coming from the windows.",
+      "createdAtISO": "2026-02-19T23:46:39.905231",
+      "createdAt": "2026-02-19T18:46:39.905247-05:00"
+    }
+  ],
+  "plainText": "Incident: \n\tNature: : House Fire\n\tAddress: : 5586 LEGIONNAIRE DR 13039 TCI: \n\tPriority: : 1\n\tCoordinates: : 43.175537,-76.133244\n\tID: : 1771544779\nUnits: Engine 1, Engine 2, Ladder 1, Medic 12\nComments: \n\tmessage: 911 call received reporting a house fire. Caller reports smoke coming from the windows.\n\tcreatedAt: 2026-02-19T18:46:39.905247-05:00\n\t---------------\n\tmessage: Dispatched fire department and EMS. Caller states occupants may still be inside.\n\tcreatedAt: 2026-02-19T18:46:57.689230-05:00\n\t---------------\n\tmessage: Firefighters on scene confirm active fire. Requesting additional units for backup and evacuation.\n\tcreatedAt: 2026-02-19T18:47:26.540845-05:00\n\t---------------\n\tmessage: EMS treating multiple patients for smoke inhalation. Additional ambulances requested for transport.\n\tcreatedAt: 2026-02-19T18:47:42.110887-05:00\n\t---------------\n\tmessage: Fire under control. Primary search complete. No occupants found inside. Secondary search in progress.\n\tcreatedAt: 2026-02-19T18:48:07.343528-05:00\n",
+  "hash": "rgSjc24ZAYFlJ2IW+Rk0z+2kPYnL1KWd2UA/LpYcEGI=",
+  "timestamp": "2026-02-19T23:50:51",
+  "filePath": "cad-incidents/6786e16a19222e52b33d9fb2/66467c31d3df3fa63cd1c8e1/2026/02/19/2350513637",
+  "groupedUnits": {
+    "available": [
+      "Engine 1",
+      "Engine 2",
+      "Ladder 1",
+      "Medic 12"
+    ]
+  }
+}

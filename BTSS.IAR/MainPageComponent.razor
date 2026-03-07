@@ -1,0 +1,988 @@
+@using BTSS.IAR.Models
+@inject AdminPreferencesStore PreferencesStore
+@inject AdminSession Session
+@inject AdminApiClient ApiClient
+@inject ServiceDatabaseReader DatabaseReader
+@inject ServiceRuntimeFileStore ServiceRuntimeStore
+@inject WindowsServiceBridge ServiceBridge
+@inject EmbeddedPageResolver EmbeddedPages
+@implements IDisposable
+
+<PageTitle>BTSS.IAR Admin</PageTitle>
+
+<style>
+.shell { display:grid; grid-template-columns: 240px 1fr; height:100vh; background:#0f172a; color:#e2e8f0; }
+.sidebar { background:#111827; padding:18px 14px; border-right:1px solid #243041; overflow:auto; }
+.brand { font-size:22px; font-weight:700; margin-bottom:6px; }
+.subtitle { color:#94a3b8; font-size:13px; margin-bottom:18px; }
+.nav-btn { display:block; width:100%; text-align:left; margin:6px 0; padding:10px 12px; border:none; border-radius:10px; background:transparent; color:#cbd5e1; cursor:pointer; }
+.nav-btn.active { background:#1d4ed8; color:white; }
+.main { padding:20px; overflow:auto; }
+.toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:16px; }
+.btn { border:none; border-radius:10px; padding:10px 14px; cursor:pointer; background:#2563eb; color:white; }
+.btn.secondary { background:#334155; }
+.btn.warn { background:#dc2626; }
+.btn.ghost { background:transparent; border:1px solid #334155; }
+.card-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:14px; }
+.card { background:#111827; border:1px solid #243041; border-radius:16px; padding:16px; box-shadow:0 8px 24px rgba(0,0,0,.18); }
+.card h3, .card h2 { margin-top:0; }
+.panel-title { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+label { display:block; margin-bottom:8px; font-size:13px; color:#94a3b8; }
+input, textarea, select { width:100%; box-sizing:border-box; padding:10px 12px; border-radius:10px; border:1px solid #334155; background:#020617; color:#e2e8f0; }
+textarea { min-height:160px; resize:vertical; font-family:Consolas, monospace; }
+.grid-2 { display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:14px; }
+.muted { color:#94a3b8; }
+.status { padding:8px 12px; border-radius:999px; display:inline-block; font-size:12px; }
+.status.ok { background:#14532d; color:#bbf7d0; }
+.status.warn { background:#78350f; color:#fde68a; }
+.status.bad { background:#7f1d1d; color:#fecaca; }
+pre { white-space:pre-wrap; word-break:break-word; background:#020617; border:1px solid #243041; border-radius:12px; padding:12px; }
+.table-wrap { overflow:auto; }
+.table { width:100%; border-collapse:collapse; }
+.table th, .table td { padding:10px; border-bottom:1px solid #243041; vertical-align:top; text-align:left; }
+.table th { color:#94a3b8; font-size:12px; text-transform:uppercase; letter-spacing:.05em; }
+.table tr.selectable { cursor:pointer; }
+.table tr.selectable.active { background:#0b1220; }
+.small { font-size:12px; }
+.split { display:grid; grid-template-columns:minmax(360px, 1.25fr) minmax(300px, .75fr); gap:14px; align-items:start; }
+.embed { width:100%; min-height:640px; border:none; background:white; border-radius:12px; }
+.codebox { min-height:260px; }
+.live { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+.kpi { font-size:28px; font-weight:700; }
+.timeline { display:grid; gap:10px; }
+.timeline-item { border-left:3px solid #2563eb; padding-left:12px; }
+.pill { display:inline-flex; align-items:center; padding:4px 8px; border-radius:999px; background:#1e293b; font-size:12px; margin-right:6px; }
+.list-stack { display:grid; gap:10px; max-height:700px; overflow:auto; }
+.list-item { padding:12px; border:1px solid #243041; border-radius:12px; background:#0b1220; cursor:pointer; }
+.list-item.active { border-color:#2563eb; box-shadow:0 0 0 1px #2563eb inset; }
+.list-item-title { display:flex; justify-content:space-between; gap:8px; }
+.meta-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:10px; }
+.meta { background:#0b1220; border:1px solid #243041; border-radius:12px; padding:10px; }
+.filter-row { display:grid; grid-template-columns: 1fr 180px 180px; gap:10px; margin-bottom:12px; }
+.comment-box { background:#020617; border:1px solid #243041; border-radius:12px; padding:10px; margin-bottom:8px; }
+.unit-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:10px; }
+.unit-card { background:#020617; border:1px solid #243041; border-radius:12px; padding:10px; }
+@@media (max-width: 1080px) {
+  .shell { grid-template-columns: 1fr; }
+  .split { grid-template-columns: 1fr; }
+  .filter-row { grid-template-columns: 1fr; }
+}
+</style>
+
+<div class="shell">
+    <aside class="sidebar">
+        <div class="brand">BTSS.IAR</div>
+        <div class="subtitle">Epic 11 dashboard and live incident experience</div>
+
+        @foreach (var tab in Tabs)
+        {
+            <button class="nav-btn @(CurrentTab == tab.Key ? "active" : null)" @onclick="() => CurrentTab = tab.Key">@tab.Value</button>
+        }
+    </aside>
+
+    <main class="main">
+        <div class="toolbar">
+            <button class="btn" @onclick="ConnectAsync">Connect</button>
+            <button class="btn secondary" @onclick="ReloadAsync">Refresh</button>
+            <button class="btn secondary" @onclick="SavePreferencesAsync">Save preferences</button>
+            @if (!string.IsNullOrWhiteSpace(Notice))
+            {
+                <span class="status @(HasError ? "bad" : "ok")">@Notice</span>
+            }
+            <span class="status ok">Live refresh: @(Session.Preferences.AutoRefreshDashboard ? $"{Session.Preferences.DashboardRefreshSeconds}s" : "off")</span>
+            <span class="muted small">Last refresh @Format(LastRefreshUtc)</span>
+        </div>
+
+        @if (CurrentTab == "dashboard")
+        {
+            <section>
+                <div class="panel-title">
+                    <div>
+                        <h2>Live operations dashboard</h2>
+                        <div class="muted">Shared service-local snapshot for operator view, kiosk preview, and closed-call follow-up.</div>
+                    </div>
+                    <div class="live">
+                        <span class="status @(Dashboard.PollRuns.FirstOrDefault()?.Success == true ? "ok" : "warn")">@(Dashboard.PollRuns.FirstOrDefault()?.Success == true ? "Feed healthy" : "Check feed")</span>
+                        <span class="muted small">Latest poll @Format(Dashboard.PollRuns.FirstOrDefault()?.CompletedAtUtc ?? Dashboard.PollRuns.FirstOrDefault()?.StartedAtUtc)</span>
+                    </div>
+                </div>
+
+                <div class="card-grid">
+                    <div class="card"><h3>API client</h3><div>@(Session.Me?.Name ?? "Not connected")</div><div class="muted small">@(Session.Me?.ClientId ?? "")</div></div>
+                    <div class="card"><h3>Known clients</h3><div class="kpi">@Clients.Count</div><div class="muted small">OAuth-authenticated API catalog</div></div>
+                    <div class="card"><h3>Open incidents</h3><div class="kpi">@Dashboard.OpenIncidents.Count</div><div class="muted small">Service DB live queue</div></div>
+                    <div class="card"><h3>Closed incidents</h3><div class="kpi">@Dashboard.ClosedIncidents.Count</div><div class="muted small">Descending close history</div></div>
+                    <div class="card"><h3>Print jobs</h3><div class="kpi">@Dashboard.PrintJobs.Count</div><div class="muted small">Ledger / retry visibility</div></div>
+                    <div class="card"><h3>Service</h3><div>@ServiceStatus.Status</div><div class="muted small">@ServiceStatus.Detail</div></div>
+                </div>
+
+                <div class="split" style="margin-top:14px;">
+                    <div class="card">
+                        <div class="panel-title">
+                            <h3>Active incident view</h3>
+                            <span class="muted small">Click any open incident to inspect its timeline.</span>
+                        </div>
+                        <div class="table-wrap">
+                            <table class="table">
+                                <thead><tr><th>ID</th><th>Type</th><th>Address</th><th>Status</th><th>Updated</th></tr></thead>
+                                <tbody>
+                                @foreach (var row in Dashboard.OpenIncidents.Take(15))
+                                {
+                                    <tr class="selectable @(SelectedIncident?.Snapshot.IncidentId == row.IncidentId ? "active" : null)" @onclick="() => SelectIncidentAsync(row.IncidentId)">
+                                        <td>@row.IncidentId</td>
+                                        <td>@row.CallType</td>
+                                        <td>@row.Address</td>
+                                        <td>@row.Status</td>
+                                        <td>@Format(row.SourceUpdatedAtUtc ?? row.LastSeenUtc)</td>
+                                    </tr>
+                                }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h3>Latest print activity</h3>
+                        <div class="table-wrap">
+                            <table class="table">
+                                <thead><tr><th>ID</th><th>Status</th><th>Attempts</th><th>Printed</th></tr></thead>
+                                <tbody>
+                                @foreach (var row in Dashboard.PrintJobs.Take(10))
+                                {
+                                    <tr>
+                                        <td>@row.IncidentId</td>
+                                        <td>@row.Status</td>
+                                        <td>@row.AttemptCount</td>
+                                        <td>@Format(row.PrintedAtUtc)</td>
+                                    </tr>
+                                }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="split" style="margin-top:14px;">
+                    <div class="card">
+                        <div class="panel-title">
+                            <h3>Selected incident detail</h3>
+                            @if (SelectedIncident is not null)
+                            {
+                                <div>
+                                    <button class="btn secondary" @onclick="OpenSelectedInClosed">View in closed list</button>
+                                    <button class="btn ghost" @onclick="GoToQueryWithSelection">Seed query</button>
+                                </div>
+                            }
+                        </div>
+                        @if (SelectedIncident is null)
+                        {
+                            <div class="muted">Select an incident to see caller, units, comments, and change timeline.</div>
+                        }
+                        else
+                        {
+                            <div class="meta-grid">
+                                <div class="meta"><div class="muted small">Incident</div><div>@SelectedIncident.Snapshot.IncidentId</div></div>
+                                <div class="meta"><div class="muted small">Priority</div><div>@(string.IsNullOrWhiteSpace(SelectedIncident.Priority) ? "-" : SelectedIncident.Priority)</div></div>
+                                <div class="meta"><div class="muted small">Type</div><div>@SelectedIncident.Snapshot.CallType</div></div>
+                                <div class="meta"><div class="muted small">Status</div><div>@SelectedIncident.Snapshot.Status</div></div>
+                                <div class="meta"><div class="muted small">Address</div><div>@SelectedIncident.Snapshot.Address</div></div>
+                                <div class="meta"><div class="muted small">Location</div><div>@(string.IsNullOrWhiteSpace(SelectedIncident.LocationName) ? "-" : SelectedIncident.LocationName)</div></div>
+                                <div class="meta"><div class="muted small">Caller</div><div>@(string.IsNullOrWhiteSpace(SelectedIncident.CallerSummary) ? "-" : SelectedIncident.CallerSummary)</div></div>
+                                <div class="meta"><div class="muted small">Coordinates</div><div>@(string.IsNullOrWhiteSpace(SelectedIncident.Coordinates) ? "-" : SelectedIncident.Coordinates)</div></div>
+                            </div>
+
+                            <div class="grid-2" style="margin-top:14px;">
+                                <div>
+                                    <h3>Change timeline</h3>
+                                    <div class="timeline">
+                                        @foreach (var item in SelectedIncident.Timeline.Take(12))
+                                        {
+                                            <div class="timeline-item">
+                                                <div><strong>@DisplayTransition(item)</strong></div>
+                                                <div class="muted small">@Format(item.ObservedAtUtc) @if (!string.IsNullOrWhiteSpace(item.Notes)) { <span>- @item.Notes</span> }</div>
+                                            </div>
+                                        }
+                                        @if (SelectedIncident.Timeline.Count == 0)
+                                        {
+                                            <div class="muted">No explicit transition rows yet; use comments/units below for first-observed context.</div>
+                                        }
+                                    </div>
+                                </div>
+                                <div>
+                                    <h3>Units</h3>
+                                    <div class="unit-grid">
+                                        @foreach (var unit in SelectedIncident.Units.Take(12))
+                                        {
+                                            <div class="unit-card">
+                                                <div><strong>@unit.Id</strong> <span class="pill">@unit.Status</span></div>
+                                                <div class="muted small">@string.Join(" • ", new[] { unit.Agency, unit.Station, unit.Type }.Where(v => !string.IsNullOrWhiteSpace(v)))</div>
+                                                <div class="muted small">@Format(unit.TimestampUtc)</div>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style="margin-top:14px;">
+                                <h3>Latest comments</h3>
+                                @foreach (var comment in SelectedIncident.Comments.Take(8))
+                                {
+                                    <div class="comment-box">
+                                        <div>@comment.Message</div>
+                                        <div class="muted small">@Format(comment.CreatedAtUtc) @string.Join(" / ", new[] { comment.CreatedAgency, comment.CreatedBy }.Where(v => !string.IsNullOrWhiteSpace(v)))</div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                    <div class="card">
+                        <h3>Recent close transitions</h3>
+                        <div class="list-stack">
+                            @foreach (var item in Dashboard.RecentTransitions.Take(15))
+                            {
+                                <div class="list-item @(SelectedIncident?.Snapshot.IncidentId == item.IncidentId ? "active" : null)" @onclick="() => SelectIncidentAsync(item.IncidentId)">
+                                    <div class="list-item-title">
+                                        <strong>@item.IncidentId</strong>
+                                        <span class="muted small">@Format(item.ObservedAtUtc)</span>
+                                    </div>
+                                    <div>@DisplayTransition(item)</div>
+                                    <div class="muted small">@(string.IsNullOrWhiteSpace(item.Notes) ? "state change" : item.Notes)</div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </section>
+        }
+        else if (CurrentTab == "auth")
+        {
+            <section class="grid-2">
+                <div class="card">
+                    <h2>Authentication and endpoints</h2>
+                    <label>API base URL<input @bind="Session.Preferences.ApiBaseUrl" /></label>
+                    <label>OAuth client id<input @bind="Session.Preferences.ClientId" /></label>
+                    <label>OAuth client secret<input type="password" @bind="Session.Preferences.ClientSecret" /></label>
+                    <label>Scopes<textarea @bind="Session.Preferences.Scope"></textarea></label>
+                    <label>Preferred client numeric id<input @bind="PreferredClientIdText" /></label>
+                    <label>Preferred device id<input @bind="Session.Preferences.PreferredDeviceId" /></label>
+                </div>
+                <div class="card">
+                    <h2>Session</h2>
+                    <div>Token active: @(Session.HasValidToken ? "Yes" : "No")</div>
+                    <div>Expires: @Format(Session.ExpiresAtUtc)</div>
+                    <div style="margin-top:12px;">Resolved query URL</div>
+                    <pre>@EmbeddedPages.BuildKorzhQueryUrl(Session.Preferences.ApiBaseUrl)</pre>
+                    <div>Resolved report URL</div>
+                    <pre>@EmbeddedPages.BuildKorzhReportUrl(Session.Preferences.ApiBaseUrl)</pre>
+                </div>
+            </section>
+        }
+        else if (CurrentTab == "clients")
+        {
+            <section class="grid-2">
+                <div class="card">
+                    <h2>Known API clients</h2>
+                    <div class="table-wrap">
+                        <table class="table">
+                            <thead><tr><th>ID</th><th>Name</th><th>ClientId</th><th>Agency</th><th>Scopes</th></tr></thead>
+                            <tbody>
+                            @foreach (var client in Clients)
+                            {
+                                <tr @onclick="() => SelectClient(client)" style="cursor:pointer; background:@(SelectedClient?.Id == client.Id ? "#0b1220" : "transparent");">
+                                    <td>@client.Id</td>
+                                    <td>@client.Name</td>
+                                    <td>@client.ClientId</td>
+                                    <td>@client.AgencyId</td>
+                                    <td class="small">@string.Join(", ", client.AllowedScopes)</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="card">
+                    <h2>Create client</h2>
+                    <label>Agency id<input type="number" @bind="NewClient.AgencyId" /></label>
+                    <label>Name<input @bind="NewClient.Name" /></label>
+                    <label>Client id<input @bind="NewClient.ClientId" /></label>
+                    <label>Client secret<input @bind="NewClient.ClientSecret" /></label>
+                    <label>Scopes<textarea @bind="NewClient.AllowedScopesText"></textarea></label>
+                    <button class="btn" @onclick="CreateClientAsync">Create client</button>
+                </div>
+            </section>
+        }
+        else if (CurrentTab == "global")
+        {
+            <section class="grid-2">
+                <div class="card">
+                    <h2>Client global settings</h2>
+                    <label>Selected client id<input @bind="SelectedClientIdText" @onchange="OnSelectedClientChanged" /></label>
+                    <label>Global settings JSON<textarea class="codebox" @bind="GlobalSettingsJson"></textarea></label>
+                    <button class="btn" @onclick="SaveGlobalSettingsAsync">Save global settings</button>
+                </div>
+                <div class="card">
+                    <h2>Authenticated client /api/me settings</h2>
+                    <textarea class="codebox" @bind="MyGlobalSettingsJson"></textarea>
+                </div>
+            </section>
+        }
+        else if (CurrentTab == "devices")
+        {
+            <section class="grid-2">
+                <div class="card">
+                    <h2>Device settings</h2>
+                    <div class="table-wrap">
+                        <table class="table">
+                            <thead><tr><th>Device</th><th>Name</th><th>Location</th><th>Enabled</th></tr></thead>
+                            <tbody>
+                            @foreach (var item in DeviceRows)
+                            {
+                                <tr>
+                                    <td>@GetNodeString(item, "deviceId")</td>
+                                    <td>@GetNodeString(item["profile"], "displayName")</td>
+                                    <td>@GetNodeString(item["profile"], "location")</td>
+                                    <td>@GetNodeString(item["profile"], "enabled")</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="card">
+                    <h2>Upsert device settings</h2>
+                    <label>Device id<input @bind="EditDeviceId" /></label>
+                    <label>Profile JSON<textarea class="codebox" @bind="DeviceProfileJson"></textarea></label>
+                    <label>Settings JSON<textarea class="codebox" @bind="DeviceSettingsJson"></textarea></label>
+                    <button class="btn" @onclick="SaveDeviceAsync">Save device settings</button>
+                </div>
+            </section>
+        }
+        else if (CurrentTab == "displays")
+        {
+            <section class="grid-2">
+                <div class="card">
+                    <h2>Display registrations</h2>
+                    <div class="table-wrap">
+                        <table class="table">
+                            <thead><tr><th>Device</th><th>Name</th><th>Location</th><th>Enabled</th></tr></thead>
+                            <tbody>
+                            @foreach (var item in DisplayRows)
+                            {
+                                <tr>
+                                    <td>@GetNodeString(item, "deviceId")</td>
+                                    <td>@GetNodeString(item, "name")</td>
+                                    <td>@GetNodeString(item, "location")</td>
+                                    <td>@GetNodeString(item, "enabled")</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="card">
+                    <h2>Upsert display registration</h2>
+                    <label>Create new registration<input type="checkbox" @bind="CreateDisplay" /></label>
+                    <label>Payload JSON<textarea class="codebox" @bind="DisplayPayloadJson"></textarea></label>
+                    <button class="btn" @onclick="SaveDisplayAsync">Save display registration</button>
+                </div>
+            </section>
+        }
+        else if (CurrentTab == "service")
+        {
+            <section class="grid-2">
+                <div class="card">
+                    <h2>Windows service control</h2>
+                    <div class="status @(ServiceStatus.Status == "Running" ? "ok" : ServiceStatus.Status == "Stopped" ? "warn" : "bad")">@ServiceStatus.Status</div>
+                    <pre>@ServiceStatus.Detail</pre>
+                    <div class="toolbar">
+                        <button class="btn" @onclick="StartServiceAsync">Start</button>
+                        <button class="btn warn" @onclick="StopServiceAsync">Stop</button>
+                        <button class="btn secondary" @onclick="ReloadServiceStatusAsync">Refresh status</button>
+                    </div>
+                </div>
+                <div class="card">
+                    <h2>Service runtime configuration</h2>
+                    <label>Config path<input @bind="Session.Preferences.ServiceConfigPath" /></label>
+                    <label>API base URL<input @bind="ServiceConfig.ApiBaseUrl" /></label>
+                    <label>Incident feed path<input @bind="ServiceConfig.IncidentFeedPath" /></label>
+                    <label>Client id<input @bind="ServiceConfig.ClientId" /></label>
+                    <label>Client secret<input @bind="ServiceConfig.ClientSecret" /></label>
+                    <label>Scope<input @bind="ServiceConfig.Scope" /></label>
+                    <label>Poll interval seconds<input type="number" @bind="ServiceConfig.PollIntervalSeconds" /></label>
+                    <label>Printer name<input @bind="ServiceConfig.PrinterName" /></label>
+                    <label>Local data directory<input @bind="ServiceConfig.LocalDataDirectory" /></label>
+                    <button class="btn" @onclick="SaveServiceConfigAsync">Save service config</button>
+                </div>
+            </section>
+        }
+        else if (CurrentTab == "open" || CurrentTab == "closed")
+        {
+            var rows = GetFilteredRows(CurrentTab == "open");
+            <section class="split">
+                <div class="card">
+                    <h2>@(CurrentTab == "open" ? "Open calls" : "Closed calls")</h2>
+                    <div class="filter-row">
+                        <input placeholder="Filter by incident, type, address, caller" @bind="IncidentSearch" @bind:event="oninput" />
+                        <select @bind="SelectedAgencyFilter">
+                            <option value="">All agencies</option>
+                            @foreach (var agency in AvailableAgencies)
+                            {
+                                <option value="@agency">@agency</option>
+                            }
+                        </select>
+                        <select @bind="SelectedStatusFilter">
+                            <option value="">All statuses</option>
+                            @foreach (var status in AvailableStatuses(CurrentTab == "open") )
+                            {
+                                <option value="@status">@status</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="table-wrap">
+                        <table class="table">
+                            <thead><tr><th>ID</th><th>Agency</th><th>Type</th><th>Address</th><th>Status</th><th>Seen</th></tr></thead>
+                            <tbody>
+                            @foreach (var row in rows)
+                            {
+                                <tr class="selectable @(SelectedIncident?.Snapshot.IncidentId == row.IncidentId ? "active" : null)" @onclick="() => SelectIncidentAsync(row.IncidentId)">
+                                    <td>@row.IncidentId</td>
+                                    <td>@row.Agency</td>
+                                    <td>@row.CallType</td>
+                                    <td>@row.Address</td>
+                                    <td>@row.Status</td>
+                                    <td>@Format(row.LastSeenUtc)</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="panel-title">
+                        <h2>Incident detail</h2>
+                        <button class="btn secondary" @onclick="GoToQueryWithSelection">Seed query</button>
+                    </div>
+                    @if (SelectedIncident is null)
+                    {
+                        <div class="muted">Select a row to inspect the stored snapshot and transition history.</div>
+                    }
+                    else
+                    {
+                        <pre>@SelectedIncident.Snapshot.SummaryText</pre>
+                        <div class="timeline">
+                            @foreach (var item in SelectedIncident.Timeline.Take(20))
+                            {
+                                <div class="timeline-item">
+                                    <div><strong>@DisplayTransition(item)</strong></div>
+                                    <div class="muted small">@Format(item.ObservedAtUtc)</div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </section>
+        }
+        else if (CurrentTab == "query")
+        {
+            <section class="card">
+                <div class="panel-title">
+                    <div>
+                        <h2>Closed-call query integration</h2>
+                        <div class="muted">Use the selected incident seed to drive EasyQuery searches against the API-hosted query surface.</div>
+                    </div>
+                    <button class="btn secondary" @onclick="ClearQuerySeed">Clear seed</button>
+                </div>
+                <label>Suggested search seed<textarea @bind="QuerySeedText"></textarea></label>
+                <div class="muted small">Typical use: copy incident id, address fragment, or call type into the embedded query page.</div>
+                <iframe class="embed" src="@EmbeddedPages.BuildKorzhQueryUrl(Session.Preferences.ApiBaseUrl)"></iframe>
+            </section>
+        }
+        else if (CurrentTab == "reports")
+        {
+            <section class="card">
+                <h2>Korzh EasyReport host</h2>
+                <div class="muted">This shell embeds the API-hosted report page scaffold at <code>/korzh/reports</code>.</div>
+                <iframe class="embed" src="@EmbeddedPages.BuildKorzhReportUrl(Session.Preferences.ApiBaseUrl)"></iframe>
+            </section>
+        }
+        else if (CurrentTab == "kiosk")
+        {
+            <section class="grid-2">
+                <div class="card">
+                    <h2>Embedded kiosk preview</h2>
+                    <label>Kiosk URL<input @bind="KioskUrl" /></label>
+                    <label>Device id<input @bind="Session.Preferences.PreferredDeviceId" /></label>
+                    <div class="toolbar">
+                        <button class="btn" @onclick='() => SendKioskCommandAsync("refresh")'>Refresh</button>
+                        <button class="btn secondary" @onclick='() => SendKioskCommandAsync("relogin")'>Relogin</button>
+                        <button class="btn warn" @onclick='() => SendKioskCommandAsync("clearcookies")'>Clear cookies</button>
+                    </div>
+                </div>
+                <div class="card">
+                    <h2>Preview</h2>
+                    <iframe class="embed" src="@KioskUrl"></iframe>
+                </div>
+                <div class="card" style="grid-column: 1 / -1;">
+                    <h2>Remote command status</h2>
+                    <div class="toolbar">
+                        <button class="btn secondary" @onclick="ReloadCommandHistoryAsync">Refresh command history</button>
+                    </div>
+                    <div class="table-wrap">
+                        <table class="table">
+                            <thead><tr><th>Issued</th><th>Command</th><th>Status</th><th>Device</th><th>Message</th></tr></thead>
+                            <tbody>
+                            @foreach (var item in CommandRows.Take(20))
+                            {
+                                <tr>
+                                    <td>@Format(item.IssuedAtUtc)</td>
+                                    <td>@item.Command</td>
+                                    <td>@item.Status</td>
+                                    <td>@item.DeviceId</td>
+                                    <td>@item.ResultMessage</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        }
+    </main>
+</div>
+
+@code {
+    private Dictionary<string, string> Tabs { get; } = new()
+    {
+        ["dashboard"] = "Dashboard",
+        ["auth"] = "Authentication",
+        ["clients"] = "API clients",
+        ["global"] = "Global settings",
+        ["devices"] = "Devices",
+        ["displays"] = "Displays",
+        ["service"] = "Service",
+        ["open"] = "Open calls",
+        ["closed"] = "Closed calls",
+        ["query"] = "Query",
+        ["reports"] = "Reports",
+        ["kiosk"] = "Kiosk"
+    };
+
+    private string CurrentTab { get; set; } = "dashboard";
+    private string Notice { get; set; } = string.Empty;
+    private bool HasError { get; set; }
+    private DashboardSnapshot Dashboard { get; set; } = new();
+    private List<ApiClientSummaryDto> Clients { get; set; } = new();
+    private ApiClientSummaryDto? SelectedClient { get; set; }
+    private List<JsonObject> DeviceRows { get; set; } = new();
+    private List<JsonObject> DisplayRows { get; set; } = new();
+    private string GlobalSettingsJson { get; set; } = "{}";
+    private string MyGlobalSettingsJson { get; set; } = "{}";
+    private string DeviceProfileJson { get; set; } = "{\n  \"displayName\": \"Station display\",\n  \"location\": \"Front desk\",\n  \"enabled\": true\n}";
+    private string DeviceSettingsJson { get; set; } = "{}";
+    private string DisplayPayloadJson { get; set; } = "{\n  \"deviceId\": \"display-01\",\n  \"name\": \"Lobby display\",\n  \"location\": \"Lobby\",\n  \"enabled\": true,\n  \"settings\": {},\n  \"profile\": {\n    \"displayName\": \"Lobby display\",\n    \"location\": \"Lobby\",\n    \"enabled\": true\n  },\n  \"audit\": {\n    \"actor\": \"BTSS.IAR\",\n    \"reason\": \"admin-shell-save-display\"\n  }\n}";
+    private string EditDeviceId { get; set; } = "display-01";
+    private bool CreateDisplay { get; set; } = false;
+    private string KioskUrl { get; set; } = "https://dashboard.iamresponding.com";
+    private ServiceRuntimeDocument ServiceConfig { get; set; } = new();
+    private ServiceStatusInfo ServiceStatus { get; set; } = new();
+    private ApiClientUpsertModel NewClient { get; set; } = new();
+    private List<DeviceCommandDto> CommandRows { get; set; } = new();
+    private IncidentDetailView? SelectedIncident { get; set; }
+    private string IncidentSearch { get; set; } = string.Empty;
+    private string SelectedAgencyFilter { get; set; } = string.Empty;
+    private string SelectedStatusFilter { get; set; } = string.Empty;
+    private string QuerySeedText { get; set; } = string.Empty;
+    private DateTimeOffset? LastRefreshUtc { get; set; }
+    private PeriodicTimer? _timer;
+    private CancellationTokenSource? _timerCts;
+
+    private string? SelectedClientIdText
+    {
+        get => SelectedClient?.Id.ToString();
+        set
+        {
+            if (int.TryParse(value, out var id))
+            {
+                SelectedClient = Clients.FirstOrDefault(x => x.Id == id);
+                Session.Preferences.PreferredClientNumericId = id;
+            }
+            else
+            {
+                SelectedClient = null;
+                Session.Preferences.PreferredClientNumericId = null;
+            }
+        }
+    }
+
+    private string PreferredClientIdText
+    {
+        get => Session.Preferences.PreferredClientNumericId?.ToString() ?? string.Empty;
+        set
+        {
+            if (int.TryParse(value, out var id)) Session.Preferences.PreferredClientNumericId = id;
+            else Session.Preferences.PreferredClientNumericId = null;
+        }
+    }
+
+    private IEnumerable<string> AvailableAgencies => Dashboard.OpenIncidents
+        .Concat(Dashboard.ClosedIncidents)
+        .Select(x => x.Agency)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(x => x);
+
+    protected override async Task OnInitializedAsync()
+    {
+        Session.Preferences = await PreferencesStore.LoadAsync();
+        KioskUrl = string.IsNullOrWhiteSpace(KioskUrl) ? "https://dashboard.iamresponding.com" : KioskUrl;
+        ServiceConfig = await ServiceRuntimeStore.LoadAsync(Session.Preferences.ServiceConfigPath);
+        await ReloadAsync();
+        StartAutoRefresh();
+    }
+
+    private IEnumerable<string> AvailableStatuses(bool open) => (open ? Dashboard.OpenIncidents : Dashboard.ClosedIncidents)
+        .Select(x => x.Status)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(x => x);
+
+    private IEnumerable<IncidentListItem> GetFilteredRows(bool open)
+    {
+        IEnumerable<IncidentListItem> rows = open ? Dashboard.OpenIncidents : Dashboard.ClosedIncidents;
+        if (!string.IsNullOrWhiteSpace(SelectedAgencyFilter))
+            rows = rows.Where(x => string.Equals(x.Agency, SelectedAgencyFilter, StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(SelectedStatusFilter))
+            rows = rows.Where(x => string.Equals(x.Status, SelectedStatusFilter, StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(IncidentSearch))
+        {
+            var term = IncidentSearch.Trim();
+            rows = rows.Where(x => string.Join(" ", new[] { x.IncidentId, x.CallType, x.Address, x.Agency, x.SummaryText })
+                .Contains(term, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return rows.Take(250);
+    }
+
+    private async Task ConnectAsync()
+    {
+        try
+        {
+            var token = await ApiClient.RequestTokenAsync(Session.Preferences);
+            Session.AccessToken = token.AccessToken;
+            Session.ExpiresAtUtc = DateTimeOffset.UtcNow.AddSeconds(token.ExpiresIn);
+            Session.Me = await ApiClient.GetMeAsync(Session);
+            MyGlobalSettingsJson = Pretty(await ApiClient.GetMyGlobalSettingsAsync(Session) ?? new JsonObject());
+            if (Session.Preferences.PreferredClientNumericId.HasValue)
+                SelectedClient = Clients.FirstOrDefault(x => x.Id == Session.Preferences.PreferredClientNumericId.Value) ?? SelectedClient;
+            SetNotice("Connected successfully.");
+            await LoadApiDataAsync();
+            await ReloadCommandHistoryAsync();
+        }
+        catch (Exception ex)
+        {
+            SetError($"Connect failed: {ex.Message}");
+        }
+    }
+
+    private async Task ReloadAsync()
+    {
+        await ReloadDashboardAsync();
+        await ReloadServiceStatusAsync();
+        if (Session.HasValidToken)
+        {
+            await LoadApiDataAsync();
+            await ReloadCommandHistoryAsync();
+        }
+
+        if (SelectedIncident is null)
+        {
+            var seed = Dashboard.OpenIncidents.FirstOrDefault()?.IncidentId ?? Dashboard.ClosedIncidents.FirstOrDefault()?.IncidentId;
+            if (!string.IsNullOrWhiteSpace(seed))
+                await SelectIncidentAsync(seed);
+        }
+        else
+        {
+            await SelectIncidentAsync(SelectedIncident.Snapshot.IncidentId);
+        }
+
+        LastRefreshUtc = DateTimeOffset.Now;
+    }
+
+    private async Task ReloadDashboardAsync()
+    {
+        try
+        {
+            Dashboard = await DatabaseReader.LoadAsync(Session.Preferences.ServiceDatabasePath);
+        }
+        catch (Exception ex)
+        {
+            SetError($"Dashboard load failed: {ex.Message}");
+        }
+    }
+
+    private async Task SelectIncidentAsync(string incidentId)
+    {
+        SelectedIncident = await DatabaseReader.LoadIncidentDetailAsync(Session.Preferences.ServiceDatabasePath, incidentId);
+        if (SelectedIncident is not null && string.IsNullOrWhiteSpace(QuerySeedText))
+            QuerySeedText = SelectedIncident.QuerySeed;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadApiDataAsync()
+    {
+        try
+        {
+            Clients = await ApiClient.GetClientsAsync(Session);
+            if (SelectedClient is null && Session.Preferences.PreferredClientNumericId.HasValue)
+                SelectedClient = Clients.FirstOrDefault(x => x.Id == Session.Preferences.PreferredClientNumericId.Value);
+            if (SelectedClient is null && Clients.Count > 0)
+                SelectedClient = Clients[0];
+
+            if (SelectedClient is not null)
+            {
+                GlobalSettingsJson = Pretty(await ApiClient.GetClientGlobalSettingsAsync(Session, SelectedClient.Id) ?? new JsonObject());
+                DeviceRows = await ApiClient.GetClientDevicesAsync(Session, SelectedClient.Id);
+                DisplayRows = await ApiClient.GetClientDisplaysAsync(Session, SelectedClient.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            SetError($"API load failed: {ex.Message}");
+        }
+    }
+
+    private async Task SavePreferencesAsync()
+    {
+        await PreferencesStore.SaveAsync(Session.Preferences);
+        SetNotice("Preferences saved.");
+    }
+
+    private async Task SaveGlobalSettingsAsync()
+    {
+        if (SelectedClient is null) { SetError("Select a client first."); return; }
+        try
+        {
+            var node = JsonNode.Parse(GlobalSettingsJson)?.AsObject() ?? new JsonObject();
+            await ApiClient.SaveClientGlobalSettingsAsync(Session, SelectedClient.Id, node);
+            SetNotice("Global settings saved.");
+        }
+        catch (Exception ex)
+        {
+            SetError($"Save failed: {ex.Message}");
+        }
+    }
+
+    private async Task SaveDeviceAsync()
+    {
+        if (SelectedClient is null) { SetError("Select a client first."); return; }
+        try
+        {
+            var profile = JsonNode.Parse(DeviceProfileJson)?.AsObject() ?? new JsonObject();
+            var settings = JsonNode.Parse(DeviceSettingsJson)?.AsObject() ?? new JsonObject();
+            await ApiClient.SaveDeviceSettingsAsync(Session, SelectedClient.Id, EditDeviceId, profile, settings);
+            await LoadApiDataAsync();
+            SetNotice("Device settings saved.");
+        }
+        catch (Exception ex)
+        {
+            SetError($"Device save failed: {ex.Message}");
+        }
+    }
+
+    private async Task SaveDisplayAsync()
+    {
+        if (SelectedClient is null) { SetError("Select a client first."); return; }
+        try
+        {
+            var payload = JsonNode.Parse(DisplayPayloadJson)?.AsObject() ?? new JsonObject();
+            var deviceId = payload["deviceId"]?.GetValue<string>() ?? EditDeviceId;
+            await ApiClient.SaveDisplayAsync(Session, SelectedClient.Id, deviceId, payload, CreateDisplay);
+            await LoadApiDataAsync();
+            SetNotice("Display registration saved.");
+        }
+        catch (Exception ex)
+        {
+            SetError($"Display save failed: {ex.Message}");
+        }
+    }
+
+    private async Task CreateClientAsync()
+    {
+        try
+        {
+            await ApiClient.CreateClientAsync(Session, NewClient);
+            await LoadApiDataAsync();
+            SetNotice("Client created.");
+        }
+        catch (Exception ex)
+        {
+            SetError($"Create client failed: {ex.Message}");
+        }
+    }
+
+    private async Task SaveServiceConfigAsync()
+    {
+        try
+        {
+            await ServiceRuntimeStore.SaveAsync(Session.Preferences.ServiceConfigPath, ServiceConfig);
+            SetNotice("Service config saved.");
+        }
+        catch (Exception ex)
+        {
+            SetError($"Service config save failed: {ex.Message}");
+        }
+    }
+
+    private async Task ReloadServiceStatusAsync()
+    {
+        ServiceStatus = await ServiceBridge.GetStatusAsync();
+    }
+
+    private async Task StartServiceAsync()
+    {
+        try
+        {
+            ServiceStatus.Detail = await ServiceBridge.StartAsync();
+            await ReloadServiceStatusAsync();
+            SetNotice("Service start issued.");
+        }
+        catch (Exception ex)
+        {
+            SetError($"Start failed: {ex.Message}");
+        }
+    }
+
+    private async Task StopServiceAsync()
+    {
+        try
+        {
+            ServiceStatus.Detail = await ServiceBridge.StopAsync();
+            await ReloadServiceStatusAsync();
+            SetNotice("Service stop issued.");
+        }
+        catch (Exception ex)
+        {
+            SetError($"Stop failed: {ex.Message}");
+        }
+    }
+
+    private async Task SendKioskCommandAsync(string command)
+    {
+        try
+        {
+            var issued = await ApiClient.SendKioskCommandAsync(Session, command, Session.Preferences.PreferredDeviceId);
+            await ReloadCommandHistoryAsync();
+            SetNotice($"Kiosk command '{command}' sent ({issued?.Id ?? "queued"}).");
+        }
+        catch (Exception ex)
+        {
+            SetError($"Kiosk command failed: {ex.Message}");
+        }
+    }
+
+    private async Task ReloadCommandHistoryAsync()
+    {
+        if (!Session.HasValidToken)
+            return;
+
+        var clientId = SelectedClient?.Id ?? Session.Preferences.PreferredClientNumericId ?? Session.Me?.Id ?? 0;
+        if (clientId <= 0)
+        {
+            CommandRows = new();
+            return;
+        }
+
+        CommandRows = await ApiClient.GetDeviceCommandsAsync(Session, clientId, Session.Preferences.PreferredDeviceId);
+    }
+
+    private async Task OnSelectedClientChanged(ChangeEventArgs _)
+    {
+        if (SelectedClient is not null)
+        {
+            await LoadApiDataAsync();
+            await ReloadCommandHistoryAsync();
+        }
+    }
+
+    private void OpenSelectedInClosed()
+    {
+        if (SelectedIncident is null)
+            return;
+
+        IncidentSearch = SelectedIncident.Snapshot.IncidentId;
+        CurrentTab = "closed";
+    }
+
+    private void GoToQueryWithSelection()
+    {
+        if (SelectedIncident is not null)
+            QuerySeedText = SelectedIncident.QuerySeed;
+        CurrentTab = "query";
+    }
+
+    private void ClearQuerySeed() => QuerySeedText = string.Empty;
+
+    private void SelectClient(ApiClientSummaryDto client)
+    {
+        SelectedClient = client;
+        Session.Preferences.PreferredClientNumericId = client.Id;
+        _ = InvokeAsync(async () =>
+        {
+            await LoadApiDataAsync();
+            await ReloadCommandHistoryAsync();
+        });
+    }
+
+    private void SetNotice(string message)
+    {
+        Notice = message;
+        HasError = false;
+        StateHasChanged();
+    }
+
+    private void SetError(string message)
+    {
+        Notice = message;
+        HasError = true;
+        StateHasChanged();
+    }
+
+    private static string Pretty(JsonNode node) => node.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+    private static string Pretty(JsonObject node) => node.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+    private static string Format(DateTimeOffset? value) => value?.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss") ?? "-";
+    private static string GetNodeString(JsonNode? node, string key) => node?[key]?.ToJsonString()?.Trim('"') ?? string.Empty;
+    private static string DisplayTransition(IncidentTransitionItem item)
+    {
+        var from = string.IsNullOrWhiteSpace(item.FromStatus) ? "(none)" : item.FromStatus;
+        var to = string.IsNullOrWhiteSpace(item.ToStatus) ? "(none)" : item.ToStatus;
+        return item.FromClosed != item.ToClosed
+            ? $"{from} -> {to} ({(item.ToClosed ? "closed" : "reopened")})"
+            : $"{from} -> {to}";
+    }
+
+    private void StartAutoRefresh()
+    {
+        if (!Session.Preferences.AutoRefreshDashboard || Session.Preferences.DashboardRefreshSeconds < 5)
+            return;
+
+        _timerCts = new CancellationTokenSource();
+        _timer = new PeriodicTimer(TimeSpan.FromSeconds(Session.Preferences.DashboardRefreshSeconds));
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (await _timer.WaitForNextTickAsync(_timerCts.Token))
+                    await InvokeAsync(ReloadAsync);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        });
+    }
+
+    public void Dispose()
+    {
+        _timerCts?.Cancel();
+        _timer?.Dispose();
+        _timerCts?.Dispose();
+    }
+}
