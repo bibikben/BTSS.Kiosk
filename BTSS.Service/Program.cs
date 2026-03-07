@@ -16,6 +16,10 @@ builder.Services.AddOptions<ServiceRuntimeOptions>()
     .Validate(options => options.Validate(out _), "Service settings are invalid.")
     .ValidateOnStart();
 
+builder.Services.PostConfigure<ServiceRuntimeOptions>(options =>
+{
+    LegacyServiceOptionsCompatibility.Apply(builder.Configuration, options);
+});
 builder.Services.AddDbContext<ServiceDbContext>((sp, options) =>
 {
     var runtime = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<ServiceRuntimeOptions>>().Value;

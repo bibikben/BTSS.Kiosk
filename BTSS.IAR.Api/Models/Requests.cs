@@ -52,6 +52,52 @@ public sealed class ApiClientUpsertRequest
     public string[]? AllowedScopes { get; set; }
 }
 
+
+public sealed class LegacyKioskMigrationRequest
+{
+    public string DeviceId { get; set; } = "";
+    public string? ApiBaseUrl { get; set; }
+    public string? StartupUrl { get; set; }
+    public string? DisplaySource { get; set; }
+    public int? SelectedMonitorIndex { get; set; }
+    public string? DisplayName { get; set; }
+    public string? Location { get; set; }
+    public string? StationCode { get; set; }
+    public string? StationName { get; set; }
+    public string? DefaultPrinterName { get; set; }
+    public bool Enabled { get; set; } = true;
+    public bool PromoteStartupUrlToGlobalSettings { get; set; }
+    public AuditStampDto? Audit { get; set; }
+}
+
+public sealed class LegacyServiceMigrationRequest
+{
+    public string? ApiBaseUrl { get; set; }
+    public string? IncidentFeedPath { get; set; }
+    public string? OAuthTokenPath { get; set; }
+    public string? ClientId { get; set; }
+    public string? Scope { get; set; }
+    public int? PollIntervalSeconds { get; set; }
+    public int? HttpTimeoutSeconds { get; set; }
+    public int? MaxConsecutiveFailuresBeforeBackoff { get; set; }
+    public int? MaxBackoffMinutes { get; set; }
+    public int? MaxPrintAttempts { get; set; }
+    public string? LocalDataDirectory { get; set; }
+    public string? DatabaseFileName { get; set; }
+    public string? PrintOutputDirectory { get; set; }
+    public string? HealthLogDirectory { get; set; }
+    public string? PrinterName { get; set; }
+    public bool? EnableShellPrinting { get; set; }
+    public JsonObject? Metadata { get; set; }
+    public AuditStampDto? Audit { get; set; }
+}
+
+public sealed class CutoverApplyRequest
+{
+    public bool DropRetiredTables { get; set; }
+    public bool Force { get; set; }
+    public string? Reason { get; set; }
+}
 public sealed class RotateClientSecretRequest
 {
     public string NewClientSecret { get; set; } = "";

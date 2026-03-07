@@ -17,7 +17,6 @@ using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddRazorPages();
 builder.Services.AddDbContext<AppDbContext>(opt =>
 {
     var cs = builder.Configuration.GetConnectionString("Sql")
@@ -135,6 +134,7 @@ using (var scope = app.Services.CreateScope())
     db.Database.EnsureCreated();
     await EnsureEpic5SchemaAsync(db);
     await EnsureEpic10SchemaAsync(db);
+    await EnsureEpic13SchemaAsync(db);
 }
 
 if (app.Environment.IsDevelopment() || app.Environment.IsStaging())
@@ -147,11 +147,9 @@ if (app.Environment.IsDevelopment() || app.Environment.IsStaging())
     });
 }
 
-app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();
-app.MapRazorPages();
 
 app.MapPost("/connect/token", async (HttpRequest request, AppDbContext db, TokenIssuer issuer) =>
 {
@@ -252,81 +250,19 @@ if (app.Environment.IsDevelopment())
 
 var api = app.MapGroup("/api").RequireAuthorization();
 
-api.MapPost("/receiveCallDetails/iar", async (HttpContext http) =>
+api.MapGet("/deprecations", () => Results.Ok(new
 {
-    var (ok, body, err) = await ReadBodySafeAsync(http.Request, maxBytes: 1024 * 1024);
-    if (!ok) return Results.BadRequest(new { message = err });
-
-    EmergencyCallUnified? incident;
-    try
+    removedRoutes = new[]
     {
-        var req = JsonSerializer.Deserialize<ReceiveIarCallDetailsRequest>(body, JsonUtil.Options);
-        incident = req?.Incident;
-    }
-    catch (JsonException)
-    {
-        return Results.BadRequest(new { message = "Invalid JSON" });
-    }
-
-    if (incident is null)
-        return Results.BadRequest(new { message = "Missing Incident" });
-
-    return Results.Ok(new ReceiveCallDetailsResponse
-    {
-        CallIdentifier = incident.GetCallIdentifier() ?? "",
-        Persisted = false,
-        Message = "Epic 3 removed API call persistence. Payload validated but not stored in the API database."
-    });
-})
-.RequireAuthorization("scope:ingest")
-.RequireRateLimiting("iar-ingest");
-
-api.MapPost("/receiveCallDetails/emailText", (ReceiveEmailTextCallDetailsRequest req) =>
-{
-    var callId = StableHash(req.Body ?? string.Empty);
-    return Results.Ok(new ReceiveCallDetailsResponse
-    {
-        CallIdentifier = callId,
-        Persisted = false,
-        Message = "Epic 3 removed API call persistence. Email payload accepted but not stored in the API database."
-    });
-})
-.RequireAuthorization("scope:ingest")
-.RequireRateLimiting("iar-ingest");
-
-api.MapPost("/receiveCallDetails", (ReceiveCallDetailsRequest req) =>
-{
-    var callId = string.Equals(req.SystemIdentifier, "IAR", StringComparison.OrdinalIgnoreCase)
-        ? EmergencyCallUnifiedJson.Deserialize(req.Payload)?.GetCallIdentifier() ?? StableHash(req.Payload ?? string.Empty)
-        : StableHash(req.Payload ?? string.Empty);
-
-    return Results.Ok(new ReceiveCallDetailsResponse
-    {
-        CallIdentifier = callId,
-        Persisted = false,
-        Message = "Epic 3 removed API call persistence. Use the Windows service/local database for incident history and close detection."
-    });
-})
-.RequireAuthorization("scope:ingest")
-.RequireRateLimiting("iar-ingest");
-
-api.MapPost("/checkForClose", () => Results.Ok(new
-{
-    message = "checkForClose is no longer available in the API because call persistence was removed in Epic 3. Perform close detection in the Windows service local database."
-}))
-.RequireAuthorization("scope:service");
-
-api.MapGet("/getCallRecord", () => Results.Ok(new
-{
-    message = "getCallRecord is no longer available in the API because call persistence was removed in Epic 3."
-}))
-.RequireAuthorization("scope:service");
-
-api.MapGet("/getListOfCalls", () => Results.Ok(new
-{
-    message = "getListOfCalls is no longer available in the API because call persistence was removed in Epic 3."
-}))
-.RequireAuthorization("scope:service");
+        "/api/receiveCallDetails/iar",
+        "/api/receiveCallDetails/emailText",
+        "/api/receiveCallDetails",
+        "/api/checkForClose",
+        "/api/getCallRecord",
+        "/api/getListOfCalls"
+    },
+    message = "Legacy ingest and call-history endpoints were removed. Use OAuth2 token issuance, client/device/display configuration endpoints, kiosk command endpoints, and the Windows service local database/reporting pipeline."
+})).RequireAuthorization();
 
 api.MapGet("/source-systems", async (AppDbContext db) =>
 {
@@ -346,6 +282,73 @@ api.MapGet("/clients/{id:int}", async (AppDbContext db, int id) =>
     return client is null ? Results.NotFound() : Results.Ok(ToApiClientDetail(client));
 }).RequireAuthorization("scope:clients.read");
 
+api.MapGet("/cutover/summary", async (AppDbContext db) =>
+{
+    var retiredTables = await DiscoverRetiredTablesAsync(db);
+    var clients = await db.ApiClients.AsNoTracking().OrderBy(x => x.Id).ToListAsync();
+
+    var clientSummary = clients.Select(client =>
+    {
+        var global = ParseGlobalSettingsDocument(client.GlobalSettingsJson);
+        var devices = ParseDeviceSettings(client.DeviceSettingsJson);
+        var displays = ParseDisplayRegistrations(client.DisplayRegistrationsJson);
+        var commands = ParseDeviceCommands(client.DeviceCommandsJson);
+
+        return new
+        {
+            client.Id,
+            client.ClientId,
+            client.Name,
+            client.AgencyId,
+            hasGlobalSettings = global.Settings.Count > 0,
+            deviceCount = devices.Count,
+            displayCount = displays.Count,
+            pendingCommands = commands.Count(x => x.Status is DeviceCommandStatuses.Pending or DeviceCommandStatuses.Acknowledged or DeviceCommandStatuses.Running),
+            secretMigrated = !string.IsNullOrWhiteSpace(client.ClientSecretHash) && !string.IsNullOrWhiteSpace(client.ClientSecretSalt),
+            updatedAtUtc = client.UpdatedAtUtc
+        };
+    }).ToList();
+
+    return Results.Ok(new
+    {
+        retiredTables,
+        recommendedDropScript = BuildRetiredTableDropScript(retiredTables),
+        clients = clientSummary,
+        notes = new[]
+        {
+            "Review retiredTables before executing the drop step.",
+            "Kiosk bootstrap data should exist as device settings plus display registrations before cutover.",
+            "Service clients should have their service runtime metadata copied into global settings during migration."
+        }
+    });
+}).RequireAuthorization("scope:clients.read");
+
+api.MapPost("/cutover/apply", async (AppDbContext db, CutoverApplyRequest req) =>
+{
+    if (!req.DropRetiredTables)
+        return Results.Ok(new { message = "No destructive action requested.", retiredTables = await DiscoverRetiredTablesAsync(db) });
+
+    if (!req.Force)
+        return Results.BadRequest(new { message = "Set Force=true to apply retired table drop statements after reviewing the summary endpoint." });
+
+    var retiredTables = await DiscoverRetiredTablesAsync(db);
+    if (retiredTables.Count == 0)
+        return Results.Ok(new { message = "No retired tables were found.", retiredTables });
+
+    if (!db.Database.IsSqlServer())
+        return Results.BadRequest(new { message = "Retired table drop automation currently targets SQL Server only.", retiredTables });
+
+    var script = BuildRetiredTableDropScript(retiredTables);
+    if (!string.IsNullOrWhiteSpace(script))
+        await db.Database.ExecuteSqlRawAsync(script);
+
+    return Results.Ok(new
+    {
+        message = "Retired tables dropped.",
+        retiredTables,
+        reason = req.Reason
+    });
+}).RequireAuthorization("scope:clients.write");
 api.MapPost("/clients", async (AppDbContext db, LookupUpsertService lookups, ApiClientUpsertRequest req) =>
 {
     if (string.IsNullOrWhiteSpace(req.ClientId) || string.IsNullOrWhiteSpace(req.ClientSecret) || req.AgencyId <= 0)
@@ -427,6 +430,129 @@ api.MapPut("/clients/{id:int}/global-settings", async (HttpContext http, AppDbCo
     client.UpdatedAtUtc = DateTime.UtcNow;
     await db.SaveChangesAsync();
     return Results.Ok(new { message = "Updated", clientId = client.Id });
+}).RequireAuthorization("scope:global.write");
+
+api.MapPost("/clients/{id:int}/migrate/legacy-kiosk", async (HttpContext http, AppDbContext db, int id, LegacyKioskMigrationRequest req) =>
+{
+    var client = await db.ApiClients.FirstOrDefaultAsync(x => x.Id == id);
+    if (client is null) return Results.NotFound();
+
+    var deviceId = string.IsNullOrWhiteSpace(req.DeviceId)
+        ? $"legacy-{client.ClientId.ToLowerInvariant()}"
+        : req.DeviceId.Trim();
+
+    var audit = BuildAudit(req.Audit, http.User, "legacy-kiosk-migration");
+    var global = ParseGlobalSettingsDocument(client.GlobalSettingsJson);
+    var deviceSettings = ParseDeviceSettings(client.DeviceSettingsJson);
+    var displays = ParseDisplayRegistrations(client.DisplayRegistrationsJson);
+
+    if (!string.IsNullOrWhiteSpace(req.ApiBaseUrl))
+        global.Settings["apiBaseUrl"] = req.ApiBaseUrl;
+
+    if (req.PromoteStartupUrlToGlobalSettings && !string.IsNullOrWhiteSpace(req.StartupUrl))
+        global.Settings["startupUrl"] = req.StartupUrl;
+
+    global.Settings["migration"] = MergeObjects(global.Settings["migration"] as JsonObject, new JsonObject
+    {
+        ["legacyKioskMigratedAtUtc"] = DateTime.UtcNow,
+        ["legacyKioskDeviceId"] = deviceId
+    });
+
+    var profile = new DeviceProfileDto
+    {
+        DisplayName = req.DisplayName,
+        Location = req.Location,
+        StationCode = req.StationCode,
+        StationName = req.StationName,
+        StartupUrl = req.StartupUrl,
+        DisplaySource = req.DisplaySource ?? req.StartupUrl,
+        DefaultPrinterName = req.DefaultPrinterName,
+        Enabled = req.Enabled
+    };
+
+    var settings = new JsonObject();
+    if (req.SelectedMonitorIndex.HasValue) settings["selectedMonitorIndex"] = req.SelectedMonitorIndex.Value;
+    if (!string.IsNullOrWhiteSpace(req.StartupUrl)) settings["startupUrl"] = req.StartupUrl;
+    if (!string.IsNullOrWhiteSpace(req.DisplaySource)) settings["displaySource"] = req.DisplaySource;
+    if (!string.IsNullOrWhiteSpace(req.DefaultPrinterName)) settings["defaultPrinterName"] = req.DefaultPrinterName;
+
+    var deviceEntry = UpsertDeviceSettingsEntry(deviceSettings, deviceId, new DeviceSettingsUpsertRequest
+    {
+        DeviceId = deviceId,
+        Profile = profile,
+        Settings = settings,
+        Audit = req.Audit
+    }, audit);
+
+    var displayEntry = UpsertDisplayRegistration(displays, deviceId, new DisplayRegistrationUpsertRequest
+    {
+        DeviceId = deviceId,
+        Name = req.DisplayName,
+        Location = req.Location,
+        Enabled = req.Enabled,
+        Settings = settings,
+        Profile = profile,
+        Audit = req.Audit
+    }, audit);
+
+    client.GlobalSettingsJson = JsonSerializer.Serialize(global, JsonUtil.Options);
+    client.DeviceSettingsJson = JsonSerializer.Serialize(deviceSettings, JsonUtil.Options);
+    client.DisplayRegistrationsJson = JsonSerializer.Serialize(displays, JsonUtil.Options);
+    client.UpdatedAtUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync();
+
+    return Results.Ok(new
+    {
+        message = "Legacy kiosk settings migrated.",
+        device = deviceEntry,
+        display = displayEntry,
+        configuration = ResolveDeviceConfiguration(client, deviceId)
+    });
+}).RequireAuthorization("scope:device.write");
+
+api.MapPost("/clients/{id:int}/migrate/legacy-service", async (HttpContext http, AppDbContext db, int id, LegacyServiceMigrationRequest req) =>
+{
+    var client = await db.ApiClients.FirstOrDefaultAsync(x => x.Id == id);
+    if (client is null) return Results.NotFound();
+
+    var audit = BuildAudit(req.Audit, http.User, "legacy-service-migration");
+    var global = ParseGlobalSettingsDocument(client.GlobalSettingsJson);
+    var serviceNode = MergeObjects(global.Settings["service"] as JsonObject, new JsonObject());
+
+    SetIfPresent(serviceNode, "apiBaseUrl", req.ApiBaseUrl);
+    SetIfPresent(serviceNode, "incidentFeedPath", req.IncidentFeedPath);
+    SetIfPresent(serviceNode, "oauthTokenPath", req.OAuthTokenPath);
+    SetIfPresent(serviceNode, "clientId", req.ClientId);
+    SetIfPresent(serviceNode, "scope", req.Scope);
+    SetIfPresent(serviceNode, "localDataDirectory", req.LocalDataDirectory);
+    SetIfPresent(serviceNode, "databaseFileName", req.DatabaseFileName);
+    SetIfPresent(serviceNode, "printOutputDirectory", req.PrintOutputDirectory);
+    SetIfPresent(serviceNode, "healthLogDirectory", req.HealthLogDirectory);
+    SetIfPresent(serviceNode, "printerName", req.PrinterName);
+    if (req.PollIntervalSeconds.HasValue) serviceNode["pollIntervalSeconds"] = req.PollIntervalSeconds.Value;
+    if (req.HttpTimeoutSeconds.HasValue) serviceNode["httpTimeoutSeconds"] = req.HttpTimeoutSeconds.Value;
+    if (req.MaxConsecutiveFailuresBeforeBackoff.HasValue) serviceNode["maxConsecutiveFailuresBeforeBackoff"] = req.MaxConsecutiveFailuresBeforeBackoff.Value;
+    if (req.MaxBackoffMinutes.HasValue) serviceNode["maxBackoffMinutes"] = req.MaxBackoffMinutes.Value;
+    if (req.MaxPrintAttempts.HasValue) serviceNode["maxPrintAttempts"] = req.MaxPrintAttempts.Value;
+    if (req.EnableShellPrinting.HasValue) serviceNode["enableShellPrinting"] = req.EnableShellPrinting.Value;
+    if (req.Metadata is not null) serviceNode["metadata"] = req.Metadata.DeepClone();
+    serviceNode["migratedAtUtc"] = DateTime.UtcNow;
+
+    global.Settings["service"] = serviceNode;
+    global.Settings["migration"] = MergeObjects(global.Settings["migration"] as JsonObject, new JsonObject
+    {
+        ["legacyServiceMigratedAtUtc"] = DateTime.UtcNow
+    });
+
+    client.GlobalSettingsJson = SerializeGlobalSettings(global.Settings, audit);
+    client.UpdatedAtUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync();
+
+    return Results.Ok(new
+    {
+        message = "Legacy service settings migrated.",
+        globalSettings = ParseGlobalSettingsDocument(client.GlobalSettingsJson)
+    });
 }).RequireAuthorization("scope:global.write");
 
 api.MapGet("/clients/{id:int}/device-settings", async (AppDbContext db, int id) =>
@@ -1252,6 +1378,108 @@ IF COL_LENGTH('ApiClients', 'DeviceCommandsJson') IS NULL
         client.DeviceCommandsJson = "[]";
 
     await db.SaveChangesAsync();
+}
+
+static async Task EnsureEpic13SchemaAsync(AppDbContext db)
+{
+    var clients = await db.ApiClients.ToListAsync();
+    var changed = false;
+    foreach (var client in clients)
+    {
+        var normalizedGlobal = JsonSerializer.Serialize(ParseGlobalSettingsDocument(client.GlobalSettingsJson), JsonUtil.Options);
+        var normalizedDevices = JsonSerializer.Serialize(ParseDeviceSettings(client.DeviceSettingsJson), JsonUtil.Options);
+        var normalizedDisplays = JsonSerializer.Serialize(ParseDisplayRegistrations(client.DisplayRegistrationsJson), JsonUtil.Options);
+
+        if (!string.Equals(client.GlobalSettingsJson, normalizedGlobal, StringComparison.Ordinal))
+        {
+            client.GlobalSettingsJson = normalizedGlobal;
+            changed = true;
+        }
+
+        if (!string.Equals(client.DeviceSettingsJson, normalizedDevices, StringComparison.Ordinal))
+        {
+            client.DeviceSettingsJson = normalizedDevices;
+            changed = true;
+        }
+
+        if (!string.Equals(client.DisplayRegistrationsJson, normalizedDisplays, StringComparison.Ordinal))
+        {
+            client.DisplayRegistrationsJson = normalizedDisplays;
+            changed = true;
+        }
+    }
+
+    if (changed)
+        await db.SaveChangesAsync();
+}
+
+static async Task<List<string>> DiscoverRetiredTablesAsync(AppDbContext db)
+{
+    var known = new[]
+    {
+        "CallRecords",
+        "ClosedCallRecords",
+        "OpenCallRecords",
+        "CallDetails",
+        "CallHistory",
+        "PrintLogs",
+        "EmailMessages",
+        "ReceiveLogs"
+    };
+
+    if (!db.Database.IsSqlServer())
+        return known.ToList();
+
+    var conn = db.Database.GetDbConnection();
+    var shouldClose = conn.State != System.Data.ConnectionState.Open;
+    if (shouldClose) await conn.OpenAsync();
+    try
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE'";
+        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+            existing.Add(reader.GetString(0));
+
+        return known.Where(existing.Contains).OrderBy(x => x).ToList();
+    }
+    catch
+    {
+        return known.ToList();
+    }
+    finally
+    {
+        if (shouldClose) await conn.CloseAsync();
+    }
+}
+
+static string BuildRetiredTableDropScript(IReadOnlyList<string> retiredTables)
+{
+    if (retiredTables.Count == 0)
+        return string.Empty;
+
+    var sb = new StringBuilder();
+    foreach (var table in retiredTables)
+    {
+        sb.AppendLine($"IF OBJECT_ID(N'[dbo].[{table}]', N'U') IS NOT NULL DROP TABLE [dbo].[{table}];");
+    }
+
+    return sb.ToString();
+}
+
+static JsonObject MergeObjects(JsonObject? existing, JsonObject incoming)
+{
+    var merged = existing?.DeepClone() as JsonObject ?? new JsonObject();
+    foreach (var kvp in incoming)
+        merged[kvp.Key] = kvp.Value?.DeepClone();
+    return merged;
+}
+
+static void SetIfPresent(JsonObject target, string key, string? value)
+{
+    if (!string.IsNullOrWhiteSpace(value))
+        target[key] = value;
 }
 
 public sealed class AuditMetadata

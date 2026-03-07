@@ -22,6 +22,8 @@ public partial class BootstrapPage : ContentPage
     {
         base.OnAppearing();
 
+        BootstrapCompatibilityStore.LoadIfNeeded();
+
         var device = Bootstrap.BuildLocalBootstrapInfo();
         DeviceIdLabel.Text = $"Device ID: {device.DeviceId}";
         MachineNameLabel.Text = $"Machine: {device.MachineName}";
@@ -70,6 +72,7 @@ public partial class BootstrapPage : ContentPage
         AppSettings.KioskStationName = (StationNameEntry.Text ?? string.Empty).Trim();
         AppSettings.SavedUrl = (StartupUrlEntry.Text ?? string.Empty).Trim();
         AppSettings.SelectedMonitorIndex = Math.Max(0, MonitorPicker.SelectedIndex);
+        BootstrapCompatibilityStore.Save();
     }
 
     private async Task LoadExistingConfigurationAsync()
@@ -182,6 +185,7 @@ public partial class BootstrapPage : ContentPage
     private async void OnClearClicked(object sender, EventArgs e)
     {
         Bootstrap.ClearSavedApiSettings();
+        BootstrapCompatibilityStore.Clear();
         ApiBaseUrlEntry.Text = AppSettings.IarApiBaseUrl;
         ApiClientIdEntry.Text = string.Empty;
         ApiClientSecretEntry.Text = string.Empty;

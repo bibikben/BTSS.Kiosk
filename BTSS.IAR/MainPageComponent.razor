@@ -1,4 +1,6 @@
 @using BTSS.IAR.Models
+@using Microsoft.AspNetCore.Components.Web
+@using Microsoft.JSInterop
 @inject AdminPreferencesStore PreferencesStore
 @inject AdminSession Session
 @inject AdminApiClient ApiClient
@@ -6,6 +8,7 @@
 @inject ServiceRuntimeFileStore ServiceRuntimeStore
 @inject WindowsServiceBridge ServiceBridge
 @inject EmbeddedPageResolver EmbeddedPages
+@inject IJSRuntime JS
 @implements IDisposable
 
 <PageTitle>BTSS.IAR Admin</PageTitle>
@@ -62,6 +65,14 @@ pre { white-space:pre-wrap; word-break:break-word; background:#020617; border:1p
 .comment-box { background:#020617; border:1px solid #243041; border-radius:12px; padding:10px; margin-bottom:8px; }
 .unit-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:10px; }
 .unit-card { background:#020617; border:1px solid #243041; border-radius:12px; padding:10px; }
+.report-toolbar { display:flex; gap:10px; flex-wrap:wrap; align-items:end; margin-bottom:14px; }
+.report-preview { background:#fff; color:#0f172a; border-radius:16px; padding:18px; border:1px solid #243041; }
+.report-preview h1, .report-preview h2, .report-preview h3 { color:#0f172a; }
+.report-preview table { width:100%; border-collapse:collapse; }
+.report-preview th, .report-preview td { border:1px solid #cbd5e1; padding:8px; text-align:left; vertical-align:top; }
+.report-kpis { display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap:12px; margin:14px 0; }
+.report-kpi { background:#e2e8f0; border-radius:12px; padding:12px; }
+.report-kpi .value { font-size:24px; font-weight:700; }
 @@media (max-width: 1080px) {
   .shell { grid-template-columns: 1fr; }
   .split { grid-template-columns: 1fr; }
@@ -72,7 +83,7 @@ pre { white-space:pre-wrap; word-break:break-word; background:#020617; border:1p
 <div class="shell">
     <aside class="sidebar">
         <div class="brand">BTSS.IAR</div>
-        <div class="subtitle">Epic 11 dashboard and live incident experience</div>
+        <div class="subtitle">Dashboard, device control, and Epic 12 reporting suite</div>
 
         @foreach (var tab in Tabs)
         {
@@ -315,7 +326,7 @@ pre { white-space:pre-wrap; word-break:break-word; background:#020617; border:1p
             <section class="grid-2">
                 <div class="card">
                     <h2>Client global settings</h2>
-                    <label>Selected client id<input @bind="SelectedClientIdText" @onchange="OnSelectedClientChanged" /></label>
+                    <label>Selected client id<input @bind-value="SelectedClientIdText" @bind-value:after="OnSelectedClientChanged" /></label>
                     <label>Global settings JSON<textarea class="codebox" @bind="GlobalSettingsJson"></textarea></label>
                     <button class="btn" @onclick="SaveGlobalSettingsAsync">Save global settings</button>
                 </div>
@@ -499,9 +510,172 @@ pre { white-space:pre-wrap; word-break:break-word; background:#020617; border:1p
         else if (CurrentTab == "reports")
         {
             <section class="card">
-                <h2>Korzh EasyReport host</h2>
-                <div class="muted">This shell embeds the API-hosted report page scaffold at <code>/korzh/reports</code>.</div>
-                <iframe class="embed" src="@EmbeddedPages.BuildKorzhReportUrl(Session.Preferences.ApiBaseUrl)"></iframe>
+                <div class="panel-title">
+                    <div>
+                        <h2>Reporting suite</h2>
+                        <div class="muted">Epic 12 operational reports built from the service-local database, not removed API call tables.</div>
+                    </div>
+                    <div class="toolbar">
+                        <button class="btn secondary" @onclick="ReloadReportsAsync">Refresh reports</button>
+                        <button class="btn secondary" @onclick="PrintCurrentReportAsync">Print preview</button>
+                        <button class="btn secondary" @onclick="DownloadCurrentReportHtmlAsync">Download HTML</button>
+                        <button class="btn secondary" @onclick="DownloadCurrentReportCsvAsync">Download CSV</button>
+                    </div>
+                </div>
+
+                <div class="report-toolbar">
+                    <label>Report
+                        <select @bind="SelectedReportKind">
+                            <option value="summary">Call Summary</option>
+                            <option value="detail">Call Detail</option>
+                            <option value="monthly">Monthly Report</option>
+                        </select>
+                    </label>
+                    <label>Search
+                        <input @bind="ReportFilters.SearchText" @bind:event="oninput" />
+                    </label>
+                    <label>Agency
+                        <select @bind="ReportFilters.Agency">
+                            <option value="">All agencies</option>
+                            @foreach (var agency in ReportAgencies)
+                            {
+                                <option value="@agency">@agency</option>
+                            }
+                        </select>
+                    </label>
+                    <label>Call type
+                        <select @bind="ReportFilters.CallType">
+                            <option value="">All types</option>
+                            @foreach (var callType in ReportCallTypes)
+                            {
+                                <option value="@callType">@callType</option>
+                            }
+                        </select>
+                    </label>
+                    <label>From
+                        <input type="date" @bind-value="ReportStartDate" />
+                    </label>
+                    <label>To
+                        <input type="date" @bind-value="ReportEndDate" />
+                    </label>
+                    <label>Incident id
+                        <input @bind-value="SelectedReportIncidentId" list="reportIncidentIds" />
+                        <datalist id="reportIncidentIds">
+                            @foreach (var incidentId in ReportIncidentIds)
+                            {
+                                <option value="@incidentId"></option>
+                            }
+                        </datalist>
+                    </label>
+                </div>
+
+                <div class="report-preview">
+                    @if (SelectedReportKind == "summary")
+                    {
+                        <h1>Call Summary Report</h1>
+                        <div>Generated @Format(Reports.GeneratedAtUtc)</div>
+                        <div class="report-kpis">
+                            <div class="report-kpi"><div class="muted">Calls</div><div class="value">@FilteredSummaryRows.Count</div></div>
+                            <div class="report-kpi"><div class="muted">Avg open minutes</div><div class="value">@(FilteredSummaryRows.Count == 0 ? 0 : (int)Math.Round(FilteredSummaryRows.Average(x => x.MinutesOpen), MidpointRounding.AwayFromZero))</div></div>
+                            <div class="report-kpi"><div class="muted">Agencies</div><div class="value">@FilteredSummaryRows.Select(x => x.Agency).Distinct(StringComparer.OrdinalIgnoreCase).Count()</div></div>
+                            <div class="report-kpi"><div class="muted">Call types</div><div class="value">@FilteredSummaryRows.Select(x => x.CallType).Distinct(StringComparer.OrdinalIgnoreCase).Count()</div></div>
+                        </div>
+                        <table>
+                            <thead><tr><th>Closed</th><th>Incident</th><th>Agency</th><th>Type</th><th>Address</th><th>Caller</th><th>Units</th><th>Minutes</th></tr></thead>
+                            <tbody>
+                            @foreach (var row in FilteredSummaryRows.Take(150))
+                            {
+                                <tr>
+                                    <td>@Format(row.ClosedAtUtc)</td>
+                                    <td>@row.IncidentId</td>
+                                    <td>@row.Agency</td>
+                                    <td>@row.CallType</td>
+                                    <td>@row.Address</td>
+                                    <td>@row.PrimaryCaller</td>
+                                    <td>@row.UnitSummary</td>
+                                    <td>@row.MinutesOpen</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    }
+                    else if (SelectedReportKind == "detail")
+                    {
+                        if (ReportDetail is null)
+                        {
+                            <h1>Call Detail Report</h1>
+                            <div>Select a closed incident id to preview the detailed report.</div>
+                        }
+                        else
+                        {
+                            <h1>Call Detail Report</h1>
+                            <h2>@ReportDetail.IncidentId</h2>
+                            <div class="meta-grid">
+                                <div class="report-kpi"><div class="muted">Agency</div><div>@ReportDetail.Agency</div></div>
+                                <div class="report-kpi"><div class="muted">Type</div><div>@ReportDetail.CallType</div></div>
+                                <div class="report-kpi"><div class="muted">Priority</div><div>@ReportDetail.Priority</div></div>
+                                <div class="report-kpi"><div class="muted">Closed</div><div>@Format(ReportDetail.ClosedAtUtc)</div></div>
+                            </div>
+                            <p><strong>Address:</strong> @ReportDetail.Address</p>
+                            <p><strong>Location:</strong> @ReportDetail.LocationName</p>
+                            <p><strong>Caller:</strong> @ReportDetail.CallerSummary</p>
+                            <p><strong>Coordinates:</strong> @ReportDetail.Coordinates</p>
+                            <pre>@ReportDetail.SummaryText</pre>
+                            <h3>Units</h3>
+                            <table>
+                                <thead><tr><th>Unit</th><th>Status</th><th>Agency</th><th>Station</th><th>Time</th></tr></thead>
+                                <tbody>
+                                @foreach (var item in ReportDetail.Units.Take(150))
+                                {
+                                    <tr><td>@item.Id</td><td>@item.Status</td><td>@item.Agency</td><td>@item.Station</td><td>@Format(item.TimestampUtc)</td></tr>
+                                }
+                                </tbody>
+                            </table>
+                            <h3>Timeline</h3>
+                            <table>
+                                <thead><tr><th>Observed</th><th>Transition</th><th>Notes</th></tr></thead>
+                                <tbody>
+                                @foreach (var item in ReportDetail.Timeline.Take(150))
+                                {
+                                    <tr><td>@Format(item.ObservedAtUtc)</td><td>@DisplayTransition(item)</td><td>@item.Notes</td></tr>
+                                }
+                                </tbody>
+                            </table>
+                            <h3>Comments</h3>
+                            <table>
+                                <thead><tr><th>Created</th><th>By</th><th>Agency</th><th>Message</th></tr></thead>
+                                <tbody>
+                                @foreach (var item in ReportDetail.Comments.Take(150))
+                                {
+                                    <tr><td>@Format(item.CreatedAtUtc)</td><td>@item.CreatedBy</td><td>@item.CreatedAgency</td><td>@item.Message</td></tr>
+                                }
+                                </tbody>
+                            </table>
+                        }
+                    }
+                    else
+                    {
+                        <h1>Monthly Report</h1>
+                        <div>Generated @Format(Reports.GeneratedAtUtc)</div>
+                        <div class="report-kpis">
+                            <div class="report-kpi"><div class="muted">Rows</div><div class="value">@FilteredMonthlyRows.Count</div></div>
+                            <div class="report-kpi"><div class="muted">Incidents</div><div class="value">@FilteredMonthlyRows.Sum(x => x.IncidentCount)</div></div>
+                            <div class="report-kpi"><div class="muted">Printed</div><div class="value">@FilteredMonthlyRows.Sum(x => x.PrintedCount)</div></div>
+                            <div class="report-kpi"><div class="muted">Print failures</div><div class="value">@FilteredMonthlyRows.Sum(x => x.FailedPrintCount)</div></div>
+                        </div>
+                        <table>
+                            <thead><tr><th>Month</th><th>Agency</th><th>Type</th><th>Calls</th><th>Total minutes</th><th>Avg minutes</th><th>Printed</th><th>Print failures</th></tr></thead>
+                            <tbody>
+                            @foreach (var row in FilteredMonthlyRows.Take(200))
+                            {
+                                <tr>
+                                    <td>@row.MonthKey</td><td>@row.Agency</td><td>@row.CallType</td><td>@row.IncidentCount</td><td>@row.TotalMinutesOpen</td><td>@row.AverageMinutesOpen</td><td>@row.PrintedCount</td><td>@row.FailedPrintCount</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    }
+                </div>
             </section>
         }
         else if (CurrentTab == "kiosk")
@@ -591,6 +765,11 @@ pre { white-space:pre-wrap; word-break:break-word; background:#020617; border:1p
     private string SelectedAgencyFilter { get; set; } = string.Empty;
     private string SelectedStatusFilter { get; set; } = string.Empty;
     private string QuerySeedText { get; set; } = string.Empty;
+    private ReportsSnapshot Reports { get; set; } = new();
+    private ReportFilterOptions ReportFilters { get; set; } = new();
+    private ReportDetailModel? ReportDetail { get; set; }
+    private string SelectedReportKind { get; set; } = "summary";
+    private string SelectedReportIncidentId { get; set; } = string.Empty;
     private DateTimeOffset? LastRefreshUtc { get; set; }
     private PeriodicTimer? _timer;
     private CancellationTokenSource? _timerCts;
@@ -686,6 +865,7 @@ pre { white-space:pre-wrap; word-break:break-word; background:#020617; border:1p
     private async Task ReloadAsync()
     {
         await ReloadDashboardAsync();
+        await ReloadReportsAsync();
         await ReloadServiceStatusAsync();
         if (Session.HasValidToken)
         {
@@ -722,8 +902,13 @@ pre { white-space:pre-wrap; word-break:break-word; background:#020617; border:1p
     private async Task SelectIncidentAsync(string incidentId)
     {
         SelectedIncident = await DatabaseReader.LoadIncidentDetailAsync(Session.Preferences.ServiceDatabasePath, incidentId);
-        if (SelectedIncident is not null && string.IsNullOrWhiteSpace(QuerySeedText))
-            QuerySeedText = SelectedIncident.QuerySeed;
+        if (SelectedIncident is not null)
+        {
+            if (string.IsNullOrWhiteSpace(QuerySeedText))
+                QuerySeedText = SelectedIncident.QuerySeed;
+            if (string.IsNullOrWhiteSpace(SelectedReportIncidentId))
+                SelectedReportIncidentId = SelectedIncident.Snapshot.IncidentId;
+        }
         await InvokeAsync(StateHasChanged);
     }
 
@@ -894,14 +1079,14 @@ pre { white-space:pre-wrap; word-break:break-word; background:#020617; border:1p
         CommandRows = await ApiClient.GetDeviceCommandsAsync(Session, clientId, Session.Preferences.PreferredDeviceId);
     }
 
-    private async Task OnSelectedClientChanged(ChangeEventArgs _)
-    {
-        if (SelectedClient is not null)
-        {
-            await LoadApiDataAsync();
-            await ReloadCommandHistoryAsync();
-        }
-    }
+    // private async Task OnSelectedClientChanged(ChangeEventArgs _)
+    // {
+    //     if (SelectedClient is not null)
+    //     {
+    //         await LoadApiDataAsync();
+    //         await ReloadCommandHistoryAsync();
+    //     }
+    // }
 
     private void OpenSelectedInClosed()
     {
@@ -932,6 +1117,172 @@ pre { white-space:pre-wrap; word-break:break-word; background:#020617; border:1p
         });
     }
 
+
+    private IReadOnlyList<ReportSummaryRow> FilteredSummaryRows => Reports.SummaryRows
+        .Where(MatchesReportFilters)
+        .ToList();
+
+    private IReadOnlyList<MonthlyReportRow> FilteredMonthlyRows => Reports.MonthlyRows
+        .Where(row => string.IsNullOrWhiteSpace(ReportFilters.Agency) || string.Equals(row.Agency, ReportFilters.Agency, StringComparison.OrdinalIgnoreCase))
+        .Where(row => string.IsNullOrWhiteSpace(ReportFilters.CallType) || string.Equals(row.CallType, ReportFilters.CallType, StringComparison.OrdinalIgnoreCase))
+        .Where(row => string.IsNullOrWhiteSpace(ReportFilters.SearchText) || string.Join(" ", new[] { row.MonthKey, row.Agency, row.CallType }).Contains(ReportFilters.SearchText.Trim(), StringComparison.OrdinalIgnoreCase))
+        .ToList();
+
+    private IReadOnlyList<string> ReportAgencies => Reports.SummaryRows
+        .Select(x => x.Agency)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(x => x)
+        .ToList();
+
+    private IReadOnlyList<string> ReportCallTypes => Reports.SummaryRows
+        .Select(x => x.CallType)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(x => x)
+        .ToList();
+
+    private IReadOnlyList<string> ReportIncidentIds => Reports.SummaryRows
+        .Select(x => x.IncidentId)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderByDescending(x => x)
+        .ToList();
+
+    private DateTime? ReportStartDate {get => ReportFilters.StartDate; set => ReportFilters.StartDate = value;}
+    private DateTime? ReportEndDate {get => ReportFilters.EndDate; set => ReportFilters.EndDate = value;}
+
+    private string ReportStartDateText
+    {
+        get => ReportFilters.StartDate?.ToString("yyyy-MM-dd") ?? string.Empty;
+        set => ReportFilters.StartDate = DateTime.TryParse(value, out var parsed) ? parsed.Date : null;
+    }
+
+    private string ReportEndDateText
+    {
+        get => ReportFilters.EndDate?.ToString("yyyy-MM-dd") ?? string.Empty;
+        set => ReportFilters.EndDate = DateTime.TryParse(value, out var parsed) ? parsed.Date : null;
+    }
+
+    private bool MatchesReportFilters(ReportSummaryRow row)
+    {
+        if (!string.IsNullOrWhiteSpace(ReportFilters.SearchText))
+        {
+            var haystack = string.Join(" ", new[] { row.IncidentId, row.Agency, row.CallType, row.Address, row.PrimaryCaller, row.UnitSummary, row.SummaryText });
+            if (!haystack.Contains(ReportFilters.SearchText.Trim(), StringComparison.OrdinalIgnoreCase))
+                return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(ReportFilters.Agency) && !string.Equals(row.Agency, ReportFilters.Agency, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        if (!string.IsNullOrWhiteSpace(ReportFilters.CallType) && !string.Equals(row.CallType, ReportFilters.CallType, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var rowDate = (row.ClosedAtUtc ?? row.LastSeenUtc ?? row.FirstSeenUtc)?.LocalDateTime.Date;
+        if (ReportFilters.StartDate.HasValue && rowDate.HasValue && rowDate.Value < ReportFilters.StartDate.Value.Date)
+            return false;
+        if (ReportFilters.EndDate.HasValue && rowDate.HasValue && rowDate.Value > ReportFilters.EndDate.Value.Date)
+            return false;
+
+        return true;
+    }
+
+    private async Task ReloadReportsAsync()
+    {
+        try
+        {
+            Reports = await DatabaseReader.LoadReportsAsync(Session.Preferences.ServiceDatabasePath, ReportFilters);
+            if (string.IsNullOrWhiteSpace(SelectedReportIncidentId))
+                SelectedReportIncidentId = Reports.SummaryRows.FirstOrDefault()?.IncidentId ?? string.Empty;
+
+            if (SelectedReportKind == "detail" && !string.IsNullOrWhiteSpace(SelectedReportIncidentId))
+                ReportDetail = await DatabaseReader.LoadReportDetailAsync(Session.Preferences.ServiceDatabasePath, SelectedReportIncidentId);
+        }
+        catch (Exception ex)
+        {
+            SetError($"Report load failed: {ex.Message}");
+        }
+    }
+
+    private async Task PrintCurrentReportAsync()
+    {
+        await JS.InvokeVoidAsync("btssReports.printHtml", BuildCurrentReportHtml());
+    }
+
+    private async Task DownloadCurrentReportHtmlAsync()
+    {
+        await JS.InvokeVoidAsync("btssReports.downloadText", $"{SelectedReportKind}-report.html", BuildCurrentReportHtml(), "text/html;charset=utf-8");
+    }
+
+    private async Task DownloadCurrentReportCsvAsync()
+    {
+        await JS.InvokeVoidAsync("btssReports.downloadText", $"{SelectedReportKind}-report.csv", BuildCurrentReportCsv(), "text/csv;charset=utf-8");
+    }
+
+    private string BuildCurrentReportCsv()
+    {
+        if (SelectedReportKind == "monthly")
+        {
+            var rows = new List<string> { "Month,Agency,CallType,IncidentCount,TotalMinutesOpen,AverageMinutesOpen,PrintedCount,FailedPrintCount" };
+            rows.AddRange(FilteredMonthlyRows.Select(row => CsvRow(
+                row.MonthKey, row.Agency, row.CallType, row.IncidentCount.ToString(), row.TotalMinutesOpen.ToString(), row.AverageMinutesOpen.ToString(), row.PrintedCount.ToString(), row.FailedPrintCount.ToString())));
+            return string.Join("\n", rows);
+        }
+
+        if (SelectedReportKind == "detail" && ReportDetail is not null)
+        {
+            var lines = new List<string>
+            {
+                "Section,Field,Value",
+                CsvRow("Header", "IncidentId", ReportDetail.IncidentId),
+                CsvRow("Header", "Agency", ReportDetail.Agency),
+                CsvRow("Header", "CallType", ReportDetail.CallType),
+                CsvRow("Header", "Address", ReportDetail.Address),
+                CsvRow("Header", "Caller", ReportDetail.CallerSummary)
+            };
+            lines.AddRange(ReportDetail.Units.Select(x => CsvRow("Unit", x.Id, $"{x.Status} {x.Agency} {x.Station}".Trim())));
+            lines.AddRange(ReportDetail.Comments.Select(x => CsvRow("Comment", Format(x.CreatedAtUtc), x.Message)));
+            return string.Join("\n", lines);
+        }
+
+        var summary = new List<string> { "ClosedAt,IncidentId,Agency,CallType,Address,PrimaryCaller,UnitSummary,MinutesOpen,CommentCount,TransitionCount" };
+        summary.AddRange(FilteredSummaryRows.Select(row => CsvRow(
+            Format(row.ClosedAtUtc), row.IncidentId, row.Agency, row.CallType, row.Address, row.PrimaryCaller, row.UnitSummary, row.MinutesOpen.ToString(), row.CommentCount.ToString(), row.TransitionCount.ToString())));
+        return string.Join("\n", summary);
+    }
+
+    private string BuildCurrentReportHtml()
+    {
+        var body = SelectedReportKind switch
+        {
+            "monthly" => string.Join("", FilteredMonthlyRows.Select(row => $"<tr><td>{Html(row.MonthKey)}</td><td>{Html(row.Agency)}</td><td>{Html(row.CallType)}</td><td>{row.IncidentCount}</td><td>{row.TotalMinutesOpen}</td><td>{row.AverageMinutesOpen}</td><td>{row.PrintedCount}</td><td>{row.FailedPrintCount}</td></tr>")),
+            "detail" when ReportDetail is not null => $"<h1>Call Detail Report</h1><h2>{Html(ReportDetail.IncidentId)}</h2><p><strong>Agency:</strong> {Html(ReportDetail.Agency)}</p><p><strong>Type:</strong> {Html(ReportDetail.CallType)}</p><p><strong>Address:</strong> {Html(ReportDetail.Address)}</p><p><strong>Caller:</strong> {Html(ReportDetail.CallerSummary)}</p><pre>{Html(ReportDetail.SummaryText)}</pre><h3>Timeline</h3><table><thead><tr><th>Observed</th><th>Transition</th><th>Notes</th></tr></thead><tbody>{string.Join("", ReportDetail.Timeline.Select(item => $"<tr><td>{Html(Format(item.ObservedAtUtc))}</td><td>{Html(DisplayTransition(item))}</td><td>{Html(item.Notes ?? string.Empty)}</td></tr>"))}</tbody></table>",
+            _ => string.Join("", FilteredSummaryRows.Select(row => $"<tr><td>{Html(Format(row.ClosedAtUtc))}</td><td>{Html(row.IncidentId)}</td><td>{Html(row.Agency)}</td><td>{Html(row.CallType)}</td><td>{Html(row.Address)}</td><td>{Html(row.PrimaryCaller)}</td><td>{Html(row.UnitSummary)}</td><td>{row.MinutesOpen}</td></tr>"))
+        };
+
+        var heading = SelectedReportKind switch
+        {
+            "monthly" => "Monthly Report",
+            "detail" => "Call Detail Report",
+            _ => "Call Summary Report"
+        };
+
+        var tableHead = SelectedReportKind switch
+        {
+            "monthly" => "<thead><tr><th>Month</th><th>Agency</th><th>Type</th><th>Calls</th><th>Total Minutes</th><th>Avg Minutes</th><th>Printed</th><th>Failures</th></tr></thead>",
+            "detail" => string.Empty,
+            _ => "<thead><tr><th>Closed</th><th>Incident</th><th>Agency</th><th>Type</th><th>Address</th><th>Caller</th><th>Units</th><th>Minutes</th></tr></thead>"
+        };
+
+        var content = SelectedReportKind == "detail" && ReportDetail is not null
+            ? body
+            : $"<table>{tableHead}<tbody>{body}</tbody></table>";
+
+        return $"<!DOCTYPE html><html><head><meta charset='utf-8'/><title>{heading}</title><style>body{{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#111827}}table{{width:100%;border-collapse:collapse}}th,td{{border:1px solid #cbd5e1;padding:8px;text-align:left;vertical-align:top}}h1,h2,h3{{margin-bottom:8px}}pre{{white-space:pre-wrap;background:#f8fafc;padding:12px;border:1px solid #cbd5e1}}</style></head><body><h1>{heading}</h1><div>Generated {Html(Format(Reports.GeneratedAtUtc))}</div>{content}</body></html>";
+    }
+
+    private static string CsvRow(params string[] fields) => string.Join(",", fields.Select(field => "\"" + (field ?? string.Empty).Replace("\"", "\"\"") + "\""));
+    private static string Html(string value) => System.Net.WebUtility.HtmlEncode(value ?? string.Empty);
     private void SetNotice(string message)
     {
         Notice = message;
@@ -984,5 +1335,13 @@ pre { white-space:pre-wrap; word-break:break-word; background:#020617; border:1p
         _timerCts?.Cancel();
         _timer?.Dispose();
         _timerCts?.Dispose();
+    }
+    private async Task OnSelectedClientChanged()
+    {
+                if (SelectedClient is not null)
+        {
+            await LoadApiDataAsync();
+            await ReloadCommandHistoryAsync();
+        }
     }
 }
