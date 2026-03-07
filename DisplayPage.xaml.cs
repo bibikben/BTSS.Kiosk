@@ -121,7 +121,7 @@ public DisplayPage()
             try
             {
                 app.StopDisplayWindow();
-                app.ShowAdminWindow();
+                app.ShowBootstrapWindow();
             }
             catch
             {
@@ -193,7 +193,7 @@ private async Task<(bool ok, CoreWebView2WebErrorStatus? err)> NavigateWebView2A
 }
 #endif
 
-    public async Task NavigateAndLoginIfNeededAsync(string url, string agency, string username, string password)
+    public async Task NavigateAndLoginIfNeededAsync(string url, string? agency, string? username, string? password)
     {
         // Persist the starting URL + credentials for relogin behavior
         _initialUrl = NormalizeUrl(url);
@@ -221,6 +221,8 @@ private async Task<(bool ok, CoreWebView2WebErrorStatus? err)> NavigateWebView2A
         KioskWebView.Source = url;
 #endif
 
+        if (string.IsNullOrWhiteSpace(agency) || string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
+            return;
         // Now proceed with your login detection + submit JS
         var hasLogin = await EvalBoolAsync(@"
         (function(){
@@ -520,6 +522,6 @@ private async Task EnsureWebViewReadyAsync(TimeSpan timeout)
     }
 
     static string ToJsString(string value) =>
-        "\"" + (value ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+        "\"" + (value ?? "").Replace("\"", "\\\"").Replace("\"", "\\\"") + "\"";
 
 }

@@ -1,10 +1,8 @@
-using BTSS.IAR.Kiosk.Platforms.Windows.Services;
 using BTSS.IAR.Kiosk.Services;
-using BTSS.IAR.Kiosk.Services.DispatchEmail;
-using BTSS.IAR.Kiosk.Services.IarApi;
 
 #if WINDOWS
 using BTSS.IAR.Kiosk.Platforms.Windows;
+using BTSS.IAR.Kiosk.Platforms.Windows.Services;
 #endif
 
 namespace BTSS.IAR.Kiosk;
@@ -12,52 +10,51 @@ namespace BTSS.IAR.Kiosk;
 public partial class App : Application
 {
     public Window? DisplayWindow { get; private set; }
-    private readonly IEmailCheckerService _emailChecker;
-    private readonly IIarPollingService _iarPoller;
+    public IKioskBootstrapService BootstrapService { get; }
 
-    public App(IEmailCheckerService emailChecker, IIarPollingService iarPoller, IPrinterService printerService)
+    public App(IKioskBootstrapService bootstrapService)
     {
         InitializeComponent();
-        _emailChecker = emailChecker;
-        _iarPoller = iarPoller;
-        MainPage = new NavigationPage(new BootstrapPage(this));
+        BootstrapService = bootstrapService;
+        MainPage = new NavigationPage(new BootstrapPage());
     }
 
-    public async Task TryStartDisplayFromSavedAsync(bool showAdminIfMissingConfig)
+    public async Task<bool> TryBootstrapAndStartDisplayAsync(bool showBootstrapIfMissingConfig)
     {
 #if WINDOWS
-        var creds = await CredentialStore.LoadAsync();
-        if (creds == null || string.IsNullOrWhiteSpace(creds.Agency) || string.IsNullOrWhiteSpace(creds.Username))
+        var config = await BootstrapService.TryGetConfigurationAsync();
+        if (config is null)
         {
-            if (showAdminIfMissingConfig)
-                ShowAdminWindow();
-            return;
+            if (showBootstrapIfMissingConfig)
+                ShowBootstrapWindow();
+            return false;
         }
 
-        if (AppSettings.SelectedMonitorIndex < 0)
+        var startupUrl = config.ResolveStartupUrl();
+        if (string.IsNullOrWhiteSpace(startupUrl))
         {
-            if (showAdminIfMissingConfig)
-                ShowAdminWindow();
-            return;
+            if (showBootstrapIfMissingConfig)
+                ShowBootstrapWindow();
+            return false;
         }
 
-        _emailChecker.Stop();
-        _iarPoller.Stop();
-        if (string.Equals(AppSettings.ProcessingMode, "IarApi", StringComparison.OrdinalIgnoreCase))
-            _iarPoller.Start();
-        else
-            _emailChecker.Start();
+        var monitorIndex = config.ResolveMonitorIndex() ?? AppSettings.SelectedMonitorIndex;
+        AppSettings.SavedUrl = startupUrl;
+        AppSettings.SelectedMonitorIndex = monitorIndex;
+        AppSettings.KioskDisplayName = config.Profile?.DisplayName;
+        AppSettings.KioskLocation = config.Profile?.Location;
+        AppSettings.KioskStationCode = config.Profile?.StationCode;
+        AppSettings.KioskStationName = config.Profile?.StationName;
 
-        await StartDisplayAsync(
-            url: AppSettings.SavedUrl,
-            agency: creds.Agency,
-            username: creds.Username,
-            password: creds.Password,
-            monitorIndex: AppSettings.SelectedMonitorIndex);
+        await StartDisplayAsync(startupUrl, monitorIndex);
+        return true;
+#else
+        await Task.CompletedTask;
+        return false;
 #endif
     }
 
-    public void ShowAdminWindow()
+    public void ShowBootstrapWindow()
     {
 #if WINDOWS
         if (Windows.Count > 0)
@@ -71,8 +68,9 @@ public partial class App : Application
         {
             _ = MainThread.InvokeOnMainThreadAsync(async () =>
             {
+                await nav.PopToRootAsync(false);
                 if (nav.Navigation.NavigationStack.LastOrDefault() is not BootstrapPage)
-                    await nav.PushAsync(new BootstrapPage(this));
+                    await nav.PushAsync(new BootstrapPage());
             });
         }
     }
@@ -89,7 +87,7 @@ public partial class App : Application
     }
 
 #if WINDOWS
-    public async Task StartDisplayAsync(string url, string agency, string username, string password, int monitorIndex)
+    public async Task StartDisplayAsync(string url, int monitorIndex)
     {
         var displayPage = StartDisplayWindow();
         await Task.Delay(150);
@@ -103,7 +101,7 @@ public partial class App : Application
         }
 
         displayPage.StartWatchdog();
-        await displayPage.NavigateAndLoginIfNeededAsync(url, agency, username, password);
+        await displayPage.NavigateAndLoginIfNeededAsync(url, null, null, null);
     }
 #endif
 

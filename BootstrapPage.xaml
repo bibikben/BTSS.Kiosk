@@ -3,13 +3,13 @@
     x:Class="BTSS.IAR.Kiosk.BootstrapPage"
     xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
     xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
-    Title="Kiosk Bootstrap"
+    Title="Device Bootstrap"
     Padding="16">
 
     <ScrollView>
         <VerticalStackLayout Spacing="14">
             <Label Text="BTSS Kiosk Display" FontSize="28" FontAttributes="Bold" />
-            <Label Text="Epic 1 boundary realignment: this project is now display/bootstrap only." FontSize="13" Opacity="0.8" />
+            <Label Text="Display-only shell with API-driven registration and configuration." FontSize="13" Opacity="0.8" />
 
             <Border StrokeThickness="1" Padding="12">
                 <VerticalStackLayout Spacing="8">
@@ -18,22 +18,34 @@
                     <Label x:Name="MachineNameLabel" />
                     <Label x:Name="UserLabel" />
                     <Label x:Name="VersionLabel" />
+                    <Label x:Name="StatusLabel" TextColor="DarkGreen" />
                 </VerticalStackLayout>
             </Border>
 
             <Border StrokeThickness="1" Padding="12">
                 <VerticalStackLayout Spacing="10">
-                    <Label Text="Display Bootstrap" FontAttributes="Bold" FontSize="18" />
-                    <Entry x:Name="UrlEntry" Placeholder="https://auth.iamresponding.com/login/member" />
-                    <Entry x:Name="AgencyEntry" Placeholder="Agency" />
-                    <Entry x:Name="UserEntry" Placeholder="Username" />
-                    <Entry x:Name="PassEntry" Placeholder="Password" IsPassword="True" />
+                    <Label Text="API Pairing" FontAttributes="Bold" FontSize="18" />
+                    <Entry x:Name="ApiBaseUrlEntry" Placeholder="https://api.example.com" />
+                    <Entry x:Name="ApiClientIdEntry" Placeholder="OAuth Client ID" />
+                    <Entry x:Name="ApiClientSecretEntry" Placeholder="OAuth Client Secret" IsPassword="True" />
+                </VerticalStackLayout>
+            </Border>
+
+            <Border StrokeThickness="1" Padding="12">
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="Device Registration Profile" FontAttributes="Bold" FontSize="18" />
+                    <Entry x:Name="DisplayNameEntry" Placeholder="Display name" />
+                    <Entry x:Name="LocationEntry" Placeholder="Location" />
+                    <Entry x:Name="StationCodeEntry" Placeholder="Station code" />
+                    <Entry x:Name="StationNameEntry" Placeholder="Station name" />
+                    <Entry x:Name="StartupUrlEntry" Placeholder="Assigned startup URL or display source" />
                     <Label Text="Monitor" />
                     <Picker x:Name="MonitorPicker" Title="Select monitor" />
                     <HorizontalStackLayout Spacing="10">
-                        <Button Text="Start Display" Clicked="OnStartDisplayClicked" />
-                        <Button Text="Use Saved Settings" Clicked="OnUseSavedClicked" />
-                        <Button Text="Clear Saved Credentials" Clicked="OnClearClicked" />
+                        <Button Text="Use Assigned Display" Clicked="OnUseAssignedClicked" />
+                        <Button Text="Register / Update Device" Clicked="OnRegisterClicked" />
+                        <Button Text="Refresh Configuration" Clicked="OnRefreshClicked" />
+                        <Button Text="Clear Saved API Settings" Clicked="OnClearClicked" />
                     </HorizontalStackLayout>
                 </VerticalStackLayout>
             </Border>
@@ -41,10 +53,9 @@
             <Border StrokeThickness="1" Padding="12">
                 <VerticalStackLayout Spacing="8">
                     <Label Text="Boundary Notes" FontAttributes="Bold" FontSize="18" />
-                    <Label Text="• Reporting, queries, and admin workflows move to BTSS.IAR." />
-                    <Label Text="• Background polling and print orchestration move to BTSS.Service." />
-                    <Label Text="• Shared contracts live in BTSS.IAR.Record." />
-                    <Label Text="• This kiosk keeps only bootstrap, session handling, and display rendering." />
+                    <Label Text="• Kiosk keeps only bootstrap, session handling, and display rendering." />
+                    <Label Text="• Device identity is derived locally and paired through the API." />
+                    <Label Text="• First-run setup no longer depends on local manual config files." />
                 </VerticalStackLayout>
             </Border>
         </VerticalStackLayout>
