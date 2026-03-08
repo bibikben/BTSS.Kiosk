@@ -17,6 +17,7 @@ public partial class BootstrapPage : ContentPage
 
     private App CurrentApp => (App)Application.Current!;
     private IKioskBootstrapService Bootstrap => CurrentApp.BootstrapService;
+    private KioskAdminAuthService AdminAuth => Handler?.MauiContext?.Services.GetService<KioskAdminAuthService>() ?? new KioskAdminAuthService();
 
     protected override async void OnAppearing()
     {
@@ -117,8 +118,48 @@ public partial class BootstrapPage : ContentPage
         PersistApiSettings();
     }
 
+    private async Task<bool> EnsureAdminLoginAsync()
+    {
+        if (AdminAuth.HasAdminSession)
+            return true;
+
+        if (string.IsNullOrWhiteSpace(ApiBaseUrlEntry.Text))
+        {
+            await DisplayAlert("Missing API URL", "Enter the API base URL before attempting admin login.", "OK");
+            return false;
+        }
+
+        var userName = await DisplayPromptAsync("Admin login", "Username", initialValue: "superadmin");
+        if (string.IsNullOrWhiteSpace(userName))
+            return false;
+
+        var password = await DisplayPromptAsync("Admin login", "Password", initialValue: string.Empty, keyboard: Keyboard.Text);
+        if (string.IsNullOrWhiteSpace(password))
+            return false;
+
+        try
+        {
+            var session = await AdminAuth.LoginAsync(ApiBaseUrlEntry.Text.Trim(), userName.Trim(), password, null);
+            if (session is null)
+            {
+                await DisplayAlert("Access denied", "The provided account does not have kiosk admin access.", "OK");
+                return false;
+            }
+
+            StatusLabel.Text = $"Admin authenticated as {session.DisplayName}.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            await DisplayAlert("Login failed", ex.Message, "OK");
+            return false;
+        }
+    }
+
     private async void OnUseAssignedClicked(object sender, EventArgs e)
     {
+        if (!await EnsureAdminLoginAsync())
+            return;
         try
         {
             PersistApiSettings();
@@ -134,6 +175,8 @@ public partial class BootstrapPage : ContentPage
 
     private async void OnRegisterClicked(object sender, EventArgs e)
     {
+        if (!await EnsureAdminLoginAsync())
+            return;
         if (string.IsNullOrWhiteSpace(ApiBaseUrlEntry.Text) || string.IsNullOrWhiteSpace(ApiClientIdEntry.Text) || string.IsNullOrWhiteSpace(ApiClientSecretEntry.Text))
         {
             await DisplayAlert("Missing API settings", "API base URL, client ID, and client secret are required.", "OK");
@@ -179,11 +222,15 @@ public partial class BootstrapPage : ContentPage
 
     private async void OnRefreshClicked(object sender, EventArgs e)
     {
+        if (!await EnsureAdminLoginAsync())
+            return;
         await LoadExistingConfigurationAsync();
     }
 
     private async void OnClearClicked(object sender, EventArgs e)
     {
+        if (!await EnsureAdminLoginAsync())
+            return;
         Bootstrap.ClearSavedApiSettings();
         BootstrapCompatibilityStore.Clear();
         ApiBaseUrlEntry.Text = AppSettings.IarApiBaseUrl;

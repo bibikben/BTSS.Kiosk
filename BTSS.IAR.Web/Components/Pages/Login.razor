@@ -1,0 +1,63 @@
+@page "/login"
+@attribute [AllowAnonymous]
+@inject HttpClient Http
+@inject NavigationManager Navigation
+
+<PageTitle>Login</PageTitle>
+
+<RadzenRow JustifyContent="JustifyContent.Center" class="rz-mt-12">
+    <RadzenColumn Size="12" SizeMD="6" SizeLG="4">
+        <RadzenCard>
+            <RadzenStack Gap="1rem">
+                <RadzenText TextStyle="TextStyle.DisplayH5">BTSS Login</RadzenText>
+                <RadzenText TextStyle="TextStyle.Body1">Shared identity for BTSS.Web and kiosk admin access.</RadzenText>
+                <RadzenTextBox @bind-Value="model.UserName" Name="username" Placeholder="Username" Style="width:100%" />
+                <RadzenPassword @bind-Value="model.Password" Name="password" Placeholder="Password" Style="width:100%" />
+                <RadzenDropDown TValue="int?" Data="agencies" TextProperty="AgencyName" ValueProperty="AgencyId" @bind-Value="model.AgencyId" Placeholder="Agency context (optional)" Style="width:100%" />
+                @if (!string.IsNullOrWhiteSpace(error))
+                {
+                    <RadzenAlert AlertStyle="AlertStyle.Danger">@error</RadzenAlert>
+                }
+                <RadzenButton Text="Sign in" Click="SignInAsync" ButtonStyle="ButtonStyle.Primary" />
+                <RadzenText TextStyle="TextStyle.Caption">Default bootstrap admin: superadmin / ChangeMe123!</RadzenText>
+            </RadzenStack>
+        </RadzenCard>
+    </RadzenColumn>
+</RadzenRow>
+
+@code {
+    private HumanLoginRequest model = new(null, null, null);
+    private string? error;
+    private AgencyMembershipDto[] agencies = Array.Empty<AgencyMembershipDto>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var me = await Http.GetFromJsonAsync<CurrentUserDto>("/auth/me");
+            if (me is not null)
+            {
+                Navigation.NavigateTo("/");
+                return;
+            }
+        }
+        catch {}
+    }
+
+    private async Task SignInAsync()
+    {
+        error = null;
+        var response = await Http.PostAsJsonAsync("/auth/login", model);
+        if (response.IsSuccessStatusCode)
+        {
+            var current = await response.Content.ReadFromJsonAsync<CurrentUserDto>();
+            agencies = current?.Agencies ?? Array.Empty<AgencyMembershipDto>();
+            Navigation.NavigateTo("/", true);
+            return;
+        }
+
+        error = response.StatusCode == System.Net.HttpStatusCode.Unauthorized
+            ? "Invalid username or password."
+            : $"Login failed: {(int)response.StatusCode}";
+    }
+}

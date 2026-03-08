@@ -10,4 +10,7 @@
   <ItemGroup>
     <PackageReference Include="Radzen.Blazor" Version="*" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\BTSS.IAR.Api\BTSS.IAR.Api.csproj" />
+  </ItemGroup>
 </Project>

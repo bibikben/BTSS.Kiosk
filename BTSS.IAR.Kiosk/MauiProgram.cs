@@ -4,7 +4,8 @@ using Microsoft.Maui;
 using Microsoft.Maui.Controls;
 using Microsoft.Maui.Hosting;
 using BTSS.IAR.Kiosk.Services.IarApi;
-
+using BTSS.IAR.Kiosk.Services.DispatchEmail;
+using BTSS.IAR.Kiosk.Services.IarApi;
 using WinRT.Interop;
 using WebView = Microsoft.Maui.Controls.WebView;
 using BTSS.IAR.Kiosk.Services;
@@ -49,6 +50,7 @@ namespace BTSS.IAR.Kiosk
             builder.Services.AddSingleton(_ => new HttpClient());
             builder.Services.AddSingleton<IarTokenProvider>();
             builder.Services.AddSingleton<IKioskBootstrapService, KioskBootstrapService>();
+            builder.Services.AddSingleton<KioskAdminAuthService>();
 
 #if WINDOWS
             builder.ConfigureMauiHandlers(handlers =>

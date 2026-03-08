@@ -2,14 +2,17 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using BTSS.IAR.Api.Auth;
 using BTSS.IAR.Api.Data;
 using BTSS.IAR.Api.Models;
 using BTSS.IAR.Api.Models.Dtos;
 using BTSS.IAR.Record.Models;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Data.SqlClient;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
@@ -69,8 +72,29 @@ var jwtIssuer = builder.Configuration["Auth:Issuer"] ?? "btss-iar-api";
 var signingKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey));
 
 builder.Services
-    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(opt =>
+    .AddAuthentication(options =>
+    {
+        options.DefaultScheme = "smart";
+        options.DefaultChallengeScheme = "smart";
+    })
+    .AddPolicyScheme("smart", "JWT or cookie", options =>
+    {
+        options.ForwardDefaultSelector = context =>
+        {
+            var authHeader = context.Request.Headers.Authorization.ToString();
+            return authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
+                ? JwtBearerDefaults.AuthenticationScheme
+                : CookieAuthenticationDefaults.AuthenticationScheme;
+        };
+    })
+    .AddCookie(CookieAuthenticationDefaults.AuthenticationScheme, options =>
+    {
+        options.Cookie.Name = "btss.human.auth";
+        options.LoginPath = "/auth/login";
+        options.AccessDeniedPath = "/auth/denied";
+        options.SlidingExpiration = true;
+    })
+    .AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, opt =>
     {
         opt.TokenValidationParameters = new TokenValidationParameters
         {
@@ -101,6 +125,7 @@ builder.Services.AddAuthorization(options =>
 
 builder.Services.AddSingleton(new TokenIssuer(jwtIssuer, signingKey));
 builder.Services.AddScoped<LookupUpsertService>();
+builder.Services.AddScoped<HumanAuthService>();
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -136,6 +161,7 @@ using (var scope = app.Services.CreateScope())
     await EnsureEpic10SchemaAsync(db);
     await EnsureEpic13SchemaAsync(db);
     await EnsureIngestSchemaAsync(db);
+    await scope.ServiceProvider.GetRequiredService<HumanAuthService>().SeedDefaultsAsync();
 }
 
 if (app.Environment.IsDevelopment() || app.Environment.IsStaging())
@@ -963,6 +989,95 @@ api.MapPost("/me/devices/{deviceId}/commands/{commandId}/ack", async (HttpContex
     return Results.Ok(entry);
 }).RequireAuthorization("scope:kiosk.commands");
 
+
+
+app.MapPost("/auth/login", async (HttpContext http, HumanAuthService auth, HumanLoginRequest request, CancellationToken ct) =>
+{
+    var user = await auth.ValidateCredentialsAsync(request.UserName, request.Password, ct);
+    if (user is null)
+        return Results.Unauthorized();
+
+    var current = await auth.BuildCurrentUserAsync(user, request.AgencyId, ct);
+    user.ActiveAgencyId = current.ActiveAgencyId;
+    user.UpdatedAtUtc = DateTime.UtcNow;
+    await http.RequestServices.GetRequiredService<AppDbContext>().SaveChangesAsync(ct);
+    await auth.SignInAsync(http, current);
+    return Results.Ok(current);
+})
+.AllowAnonymous()
+.WithSummary("Human login for Web and kiosk admin.");
+
+app.MapPost("/auth/logout", async (HttpContext http) =>
+{
+    await http.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+    return Results.Ok(new { success = true });
+});
+
+app.MapGet("/auth/me", async (HttpContext http, AppDbContext db, HumanAuthService auth, CancellationToken ct) =>
+{
+    if (!(http.User.Identity?.IsAuthenticated ?? false))
+        return Results.Unauthorized();
+
+    var userIdValue = http.User.FindFirstValue(ClaimTypes.NameIdentifier);
+    if (!int.TryParse(userIdValue, out var userId))
+        return Results.Unauthorized();
+
+    var user = await db.Users.FirstOrDefaultAsync(x => x.Id == userId && x.IsEnabled, ct);
+    if (user is null)
+        return Results.Unauthorized();
+
+    var current = await auth.BuildCurrentUserAsync(user, user.ActiveAgencyId, ct);
+    return Results.Ok(current);
+});
+
+app.MapPost("/auth/switch-agency", async (HttpContext http, AppDbContext db, HumanAuthService auth, SwitchAgencyRequest request, CancellationToken ct) =>
+{
+    if (!(http.User.Identity?.IsAuthenticated ?? false))
+        return Results.Unauthorized();
+
+    var userIdValue = http.User.FindFirstValue(ClaimTypes.NameIdentifier);
+    if (!int.TryParse(userIdValue, out var userId))
+        return Results.Unauthorized();
+
+    var user = await db.Users.FirstOrDefaultAsync(x => x.Id == userId && x.IsEnabled, ct);
+    if (user is null)
+        return Results.Unauthorized();
+
+    var hasMembership = await db.UserAgencies.AnyAsync(x => x.UserId == user.Id && x.AgencyId == request.AgencyId && x.IsEnabled, ct);
+    if (!user.IsSuperUser && !hasMembership)
+        return Results.Forbid();
+
+    user.ActiveAgencyId = request.AgencyId;
+    user.UpdatedAtUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync(ct);
+
+    var current = await auth.BuildCurrentUserAsync(user, request.AgencyId, ct);
+    await auth.SignInAsync(http, current);
+    return Results.Ok(current);
+});
+
+app.MapPost("/auth/device-login", async (HumanAuthService auth, HumanLoginRequest request, CancellationToken ct) =>
+{
+    var user = await auth.ValidateCredentialsAsync(request.UserName, request.Password, ct);
+    if (user is null)
+        return Results.Unauthorized();
+
+    var current = await auth.BuildCurrentUserAsync(user, request.AgencyId, ct);
+    if (!current.IsSuperUser && !current.Permissions.Contains(PermissionCatalog.KioskAdmin, StringComparer.OrdinalIgnoreCase))
+        return Results.Forbid();
+
+    return Results.Ok(new KioskAdminSessionDto(current.UserId, current.UserName, current.DisplayName, current.IsSuperUser, current.ActiveAgencyId, current.Permissions, current.Agencies));
+})
+.AllowAnonymous();
+
+app.MapGet("/admin/bootstrap", async (AppDbContext db, CancellationToken ct) =>
+{
+    var agencies = await db.Agencies.Where(x => x.IsEnabled).OrderBy(x => x.Name).Select(x => new { x.Id, x.Code, x.Name }).ToListAsync(ct);
+    var roles = await db.Roles.OrderBy(x => x.Name).Select(x => new { x.Id, x.Name, x.Description }).ToListAsync(ct);
+    var permissions = await db.Permissions.OrderBy(x => x.Code).Select(x => new { x.Id, x.Code, x.Description }).ToListAsync(ct);
+    return Results.Ok(new { agencies, roles, permissions, defaultAdminUser = "superadmin", defaultAdminPassword = "ChangeMe123!" });
+})
+.RequireAuthorization();
 app.Run();
 
 static async Task EnsureEpic5SchemaAsync(AppDbContext db)

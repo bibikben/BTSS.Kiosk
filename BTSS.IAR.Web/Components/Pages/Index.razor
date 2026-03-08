@@ -1,31 +1,62 @@
 @page "/"
-<PageTitle>Index</PageTitle>
-<RadzenRow Gap="5" RowGap="5">
-    <RadzenColumn Size="12">
-        <RadzenText Text="Welcome to your new app" TextStyle="Radzen.Blazor.TextStyle.DisplayH2" TagName="Radzen.Blazor.TagName.Auto"></RadzenText>
-        <RadzenText Text="Your Success Is Our Biggest Priority" TextStyle="Radzen.Blazor.TextStyle.H4" TagName="Radzen.Blazor.TagName.H2" class="mt-5"></RadzenText>
-        <RadzenText Text="With Radzen Blazor Studio, application development is just one-click away." TextStyle="Radzen.Blazor.TextStyle.Body1" TagName="Radzen.Blazor.TagName.Auto" class="mt-4" Style="font-size: 20px; line-height: 24px"></RadzenText>
-        <RadzenText Text="Simple to setup, maintain and update." TextStyle="Radzen.Blazor.TextStyle.Body1" TagName="Radzen.Blazor.TagName.Auto" class="mt-3" Style="font-size: 20px; line-height: 24px"></RadzenText>
-        <RadzenCard Style="margin-top: 40px; padding: 20px 40px 40px;">
-            <RadzenRow>
-                <RadzenColumn Size="12" SizeMD="4">
-                    <RadzenIcon Icon="smart_button" Style="margin-top: 20px; width: 48px; height: 48px; font-size: 48px; color: var(--rz-text-title-color);"></RadzenIcon>
-                    <RadzenText Text="Learn the Fundamentals" TextStyle="Radzen.Blazor.TextStyle.DisplayH6" TagName="Radzen.Blazor.TagName.H3"></RadzenText>
-                    <RadzenLink Text="Docs" Path="https://www.radzen.com/blazor-studio/documentation/" Icon="east" Target="_blank" Style="font-size: 18px"></RadzenLink>
-                    <RadzenLink Text="Videos" Path="https://youtube.com/playlist?list=PLQyJPeb3xHcBij_RbHD__2TOo8Jv5HQVc" Icon="east" Target="_blank" Style="display: block; font-size: 18px"></RadzenLink>
-                </RadzenColumn>
-                <RadzenColumn Size="12" SizeMD="4">
-                    <RadzenIcon Icon="code" Style="margin-top: 20px; width: 48px; height: 48px; font-size: 48px; color: var(--rz-text-title-color);"></RadzenIcon>
-                    <RadzenText Text="Radzen Blazor Components" TextStyle="Radzen.Blazor.TextStyle.DisplayH6" TagName="Radzen.Blazor.TagName.H3"></RadzenText>
-                    <RadzenLink Text="Demos" Path="https://blazor.radzen.com" Icon="east" Target="_blank" Style="font-size: 18px"></RadzenLink>
-                </RadzenColumn>
-                <RadzenColumn Size="12" SizeMD="4">
-                    <RadzenIcon Icon="people_outline" Style="margin-top: 20px; width: 48px; height: 48px; font-size: 48px; color: var(--rz-text-title-color);"></RadzenIcon>
-                    <RadzenText Text="Radzen Community" TextStyle="Radzen.Blazor.TextStyle.DisplayH6" TagName="Radzen.Blazor.TagName.H3"></RadzenText>
-                    <RadzenLink Text="Radzen Blazor Studio Forums" Path="https://forum.radzen.com/c/radzen-blazor-studio/12" Icon="east" Target="_blank" Style="font-size: 18px"></RadzenLink>
-                </RadzenColumn>
-            </RadzenRow>
-        </RadzenCard>
-    </RadzenColumn>
-</RadzenRow>
+@inject HttpClient Http
 
+<PageTitle>BTSS Admin</PageTitle>
+
+@if (currentUser is null)
+{
+    <RadzenText>Loading...</RadzenText>
+}
+else
+{
+    <RadzenRow Gap="1rem">
+        <RadzenColumn Size="12">
+            <RadzenText TextStyle="TextStyle.DisplayH4">BTSS Admin Dashboard</RadzenText>
+            <RadzenText TextStyle="TextStyle.Body1">Signed in as <b>@currentUser.DisplayName</b> (@currentUser.UserName)</RadzenText>
+        </RadzenColumn>
+        <RadzenColumn Size="12" SizeLG="4">
+            <RadzenCard>
+                <RadzenStack Gap="0.5rem">
+                    <RadzenText TextStyle="TextStyle.H6">Active agency</RadzenText>
+                    <RadzenDropDown TValue="int?" Data="currentUser.Agencies" TextProperty="AgencyName" ValueProperty="AgencyId" @bind-Value="selectedAgencyId" Change="OnAgencyChanged" Style="width:100%" />
+                    <RadzenText TextStyle="TextStyle.Caption">Super user: @currentUser.IsSuperUser</RadzenText>
+                </RadzenStack>
+            </RadzenCard>
+        </RadzenColumn>
+        <RadzenColumn Size="12" SizeLG="8">
+            <RadzenCard>
+                <RadzenText TextStyle="TextStyle.H6">Granted permissions</RadzenText>
+                <RadzenWrap Gap="0.5rem" class="rz-mt-3">
+                    @foreach (var permission in currentUser.Permissions)
+                    {
+                        <RadzenBadge Text="@permission" />
+                    }
+                </RadzenWrap>
+            </RadzenCard>
+        </RadzenColumn>
+    </RadzenRow>
+}
+
+@code {
+    private CurrentUserDto? currentUser;
+    private int? selectedAgencyId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        currentUser = await Http.GetFromJsonAsync<CurrentUserDto>("/auth/me");
+        selectedAgencyId = currentUser?.ActiveAgencyId;
+    }
+
+    private async Task OnAgencyChanged(object value)
+    {
+        if (value is int agencyId)
+        {
+            var response = await Http.PostAsJsonAsync("/auth/switch-agency", new SwitchAgencyRequest(agencyId));
+            if (response.IsSuccessStatusCode)
+            {
+                currentUser = await response.Content.ReadFromJsonAsync<CurrentUserDto>();
+                selectedAgencyId = currentUser?.ActiveAgencyId;
+            }
+        }
+    }
+}
