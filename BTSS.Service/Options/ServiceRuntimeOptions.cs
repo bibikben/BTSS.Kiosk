@@ -7,7 +7,7 @@ public sealed class ServiceRuntimeOptions
     public const string SectionName = "Service";
 
     [Required]
-    public string ApiBaseUrl { get; set; } = "https://localhost:5001/";
+    public string ApiBaseUrl { get; set; } = "https://localhost:56800/";
 
     [Required]
     public string IncidentFeedPath { get; set; } = "/api/service/incidents";

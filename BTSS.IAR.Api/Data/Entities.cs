@@ -93,3 +93,21 @@ public class SourceSystemEntity
     public string Code { get; set; } = "";
     public string? Description { get; set; }
 }
+
+
+public class IngestedIncident
+{
+    public long Id { get; set; }
+    public int ApiClientId { get; set; }
+    public ApiClient? ApiClient { get; set; }
+    public int AgencyId { get; set; }
+    public string IncidentId { get; set; } = "";
+    public string CanonicalJson { get; set; } = "{}";
+    public string? Status { get; set; }
+    public bool IsClosed { get; set; }
+    public string? Agency { get; set; }
+    public string? Address { get; set; }
+    public string? CallType { get; set; }
+    public DateTime? UpdatedAtUtc { get; set; }
+    public DateTime ReceivedAtUtc { get; set; } = DateTime.UtcNow;
+}

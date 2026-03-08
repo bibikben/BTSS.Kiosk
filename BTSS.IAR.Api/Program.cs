@@ -135,6 +135,7 @@ using (var scope = app.Services.CreateScope())
     await EnsureEpic5SchemaAsync(db);
     await EnsureEpic10SchemaAsync(db);
     await EnsureEpic13SchemaAsync(db);
+    await EnsureIngestSchemaAsync(db);
 }
 
 if (app.Environment.IsDevelopment() || app.Environment.IsStaging())
@@ -164,6 +165,10 @@ app.MapPost("/connect/token", async (HttpRequest request, AppDbContext db, Token
             GrantType = string.IsNullOrWhiteSpace(form["grant_type"]) ? "client_credentials" : form["grant_type"].ToString(),
             Scope = form["scope"].ToString()
         };
+        if (string.IsNullOrEmpty(req.ClientId)) req.ClientId = form["clientId"].ToString();
+        if (string.IsNullOrEmpty(req.ClientSecret)) req.ClientSecret = form["clientSecret"].ToString();
+        if (string.IsNullOrEmpty(req.GrantType)) req.GrantType = form["grantType"].ToString();
+
     }
     else
     {
@@ -264,6 +269,104 @@ api.MapGet("/deprecations", () => Results.Ok(new
     message = "Legacy ingest and call-history endpoints were removed. Use OAuth2 token issuance, client/device/display configuration endpoints, kiosk command endpoints, and the Windows service local database/reporting pipeline."
 })).RequireAuthorization();
 
+api.MapPost("/ingest", async (HttpContext http, AppDbContext db, EmergencyCallUnified incident) =>
+{
+    if (incident is null)
+        return Results.BadRequest(new { message = "Incident payload is required." });
+
+    var incidentId = incident.GetCallIdentifier()?.Trim();
+    if (string.IsNullOrWhiteSpace(incidentId))
+        return Results.BadRequest(new { message = "Incident identifier is required. Supply details.id, id, num1, or c_num." });
+
+    var apiClientIdValue = http.User.FindFirst("api_client_id")?.Value;
+    if (!int.TryParse(apiClientIdValue, out var apiClientId) || apiClientId <= 0)
+        return Results.Unauthorized();
+
+    var client = await db.ApiClients.Include(x => x.SourceSystem).FirstOrDefaultAsync(x => x.Id == apiClientId);
+    if (client is null || !client.IsEnabled)
+        return Results.Unauthorized();
+
+    var normalized = NormalizeIncidentForIngest(incident, client);
+    var canonicalJson = EmergencyCallUnifiedJson.Serialize(normalized);
+    var updatedAtUtc = normalized.GetUpdatedAtUtc() ?? normalized.GetCreatedAtUtc() ?? DateTime.UtcNow;
+    var isClosed = normalized.GetIsClosed();
+    var receivedAtUtc = DateTime.UtcNow;
+
+    var existing = await db.IngestedIncidents.FirstOrDefaultAsync(x => x.ApiClientId == client.Id && x.IncidentId == incidentId);
+    if (existing is null)
+    {
+        existing = new IngestedIncident
+        {
+            ApiClientId = client.Id,
+            AgencyId = client.AgencyId,
+            IncidentId = incidentId
+        };
+        db.IngestedIncidents.Add(existing);
+    }
+
+    existing.CanonicalJson = canonicalJson;
+    existing.Status = normalized.Details?.Status;
+    existing.IsClosed = isClosed;
+    existing.Agency = normalized.GetAgencyName();
+    existing.Address = normalized.GetAddress();
+    existing.CallType = normalized.GetCallType();
+    existing.UpdatedAtUtc = updatedAtUtc;
+    existing.ReceivedAtUtc = receivedAtUtc;
+    client.UpdatedAtUtc = receivedAtUtc;
+
+    await db.SaveChangesAsync();
+
+    return Results.Ok(new
+    {
+        message = existing.Id > 0 ? "Ingested" : "Accepted",
+        incidentId,
+        apiClientId = client.Id,
+        clientId = client.ClientId,
+        agencyId = client.AgencyId,
+        isClosed,
+        updatedAtUtc,
+        receivedAtUtc
+    });
+})
+.RequireAuthorization("scope:ingest")
+.RequireRateLimiting("iar-ingest")
+.Accepts<EmergencyCallUnified>("application/json")
+.WithName("IngestIncident")
+.WithSummary("Receive transmitted call data")
+.WithDescription("Receives a unified emergency call payload and stores the latest canonical snapshot for the authenticated API client.");
+
+api.MapGet("/service/incidents", async (AppDbContext db, ClaimsPrincipal user, int? take) =>
+{
+    var apiClientIdValue = user.FindFirst("api_client_id")?.Value;
+    if (!int.TryParse(apiClientIdValue, out var apiClientId) || apiClientId <= 0)
+        return Results.Unauthorized();
+
+    var limit = Math.Clamp(take ?? 250, 1, 1000);
+    var items = await db.IngestedIncidents
+        .AsNoTracking()
+        .Where(x => x.ApiClientId == apiClientId)
+        .OrderByDescending(x => x.UpdatedAtUtc ?? x.ReceivedAtUtc)
+        .ThenByDescending(x => x.Id)
+        .Take(limit)
+        .Select(x => x.CanonicalJson)
+        .ToListAsync();
+
+    var payload = items
+        .Select(json => EmergencyCallUnifiedJson.Deserialize(json))
+        .Where(x => x is not null)
+        .Cast<EmergencyCallUnified>()
+        .ToList();
+
+    return Results.Ok(new
+    {
+        items = payload,
+        count = payload.Count
+    });
+})
+.RequireAuthorization("scope:service")
+.WithName("GetServiceIncidents")
+.WithSummary("Retrieve ingested incidents for the authenticated API client")
+.WithDescription("Returns the latest stored incident snapshots for service polling.");
 api.MapGet("/source-systems", async (AppDbContext db) =>
 {
     var list = await db.SourceSystems.AsNoTracking().OrderBy(x => x.Id).ToListAsync();
@@ -870,43 +973,51 @@ static async Task EnsureEpic5SchemaAsync(AppDbContext db)
     var sql = @"
 IF COL_LENGTH('ApiClients', 'AllowedScopesJson') IS NULL
     ALTER TABLE ApiClients ADD AllowedScopesJson nvarchar(max) NOT NULL CONSTRAINT DF_ApiClients_AllowedScopesJson DEFAULT '[]';
+
 IF COL_LENGTH('ApiClients', 'DeviceCommandsJson') IS NULL
     ALTER TABLE ApiClients ADD DeviceCommandsJson nvarchar(max) NOT NULL CONSTRAINT DF_ApiClients_DeviceCommandsJson DEFAULT '[]';
+
 IF COL_LENGTH('ApiClients', 'ClientSecretHash') IS NULL
     ALTER TABLE ApiClients ADD ClientSecretHash nvarchar(256) NOT NULL CONSTRAINT DF_ApiClients_ClientSecretHash DEFAULT '';
+
 IF COL_LENGTH('ApiClients', 'ClientSecretSalt') IS NULL
     ALTER TABLE ApiClients ADD ClientSecretSalt nvarchar(256) NOT NULL CONSTRAINT DF_ApiClients_ClientSecretSalt DEFAULT '';
+
 IF COL_LENGTH('ApiClients', 'ClientSecretVersion') IS NULL
     ALTER TABLE ApiClients ADD ClientSecretVersion int NOT NULL CONSTRAINT DF_ApiClients_ClientSecretVersion DEFAULT 1;
+
 IF COL_LENGTH('ApiClients', 'ClientSecretRotatedAtUtc') IS NULL
     ALTER TABLE ApiClients ADD ClientSecretRotatedAtUtc datetime2 NULL;
+
 IF COL_LENGTH('ApiClients', 'ClientSecret') IS NOT NULL
 BEGIN
-    UPDATE ApiClients
-    SET ClientSecretRotatedAtUtc = ISNULL(ClientSecretRotatedAtUtc, UpdatedAtUtc)
-    WHERE ClientSecret IS NOT NULL AND ClientSecret <> '' AND (ClientSecretHash = '' OR ClientSecretSalt = '');
-END";
+    EXEC sp_executesql N'
+        UPDATE ApiClients
+        SET ClientSecretRotatedAtUtc = ISNULL(ClientSecretRotatedAtUtc, UpdatedAtUtc)
+        WHERE ClientSecret IS NOT NULL
+          AND ClientSecret <> ''''
+          AND (ClientSecretHash = '''' OR ClientSecretSalt = '''');
+    ';
+END
+";
 
     await db.Database.ExecuteSqlRawAsync(sql);
 
-    var legacyClients = await db.ApiClients.Where(x => (x.ClientSecretHash == "" || x.ClientSecretSalt == "")).ToListAsync();
-    foreach (var client in legacyClients)
-    {
-        var legacySecret = await TryReadLegacyClientSecretAsync(db, client.Id);
-        if (!string.IsNullOrWhiteSpace(legacySecret))
-        {
-            client.SetClientSecret(legacySecret!);
-            client.UpdatedAtUtc = DateTime.UtcNow;
-        }
+    var clientsNeedingDefaults = await db.ApiClients
+        .Where(x => (x.ClientSecretHash == "" || x.ClientSecretSalt == "")
+                    || string.IsNullOrWhiteSpace(x.AllowedScopesJson)
+                    || x.AllowedScopesJson == "{}")
+        .ToListAsync();
 
+    foreach (var client in clientsNeedingDefaults)
+    {
         if (string.IsNullOrWhiteSpace(client.AllowedScopesJson) || client.AllowedScopesJson == "{}")
             client.AllowedScopesJson = JsonSerializer.Serialize(ScopeCatalog.DefaultClientScopes);
     }
 
-    if (legacyClients.Count > 0)
+    if (clientsNeedingDefaults.Count > 0)
         await db.SaveChangesAsync();
 }
-
 static async Task<string?> TryReadLegacyClientSecretAsync(AppDbContext db, int clientId)
 {
     var conn = db.Database.GetDbConnection();
@@ -932,7 +1043,6 @@ static async Task<string?> TryReadLegacyClientSecretAsync(AppDbContext db, int c
         if (shouldClose) await conn.CloseAsync();
     }
 }
-
 static async Task<(bool Ok, string Body, string? Error)> ReadBodySafeAsync(HttpRequest request, int maxBytes)
 {
     request.EnableBuffering();
@@ -1413,6 +1523,90 @@ static async Task EnsureEpic13SchemaAsync(AppDbContext db)
         await db.SaveChangesAsync();
 }
 
+static EmergencyCallUnified NormalizeIncidentForIngest(EmergencyCallUnified incident, ApiClient client)
+{
+    var nowUtc = DateTime.UtcNow;
+    var details = incident.Details is null
+        ? new Details(
+            Agency: client.Name,
+            Closed: false,
+            Id: incident.GetCallIdentifier(),
+            Source: client.ClientId,
+            Status: "Open",
+            CreatedAt: incident.GetCreatedAtUtc() ?? nowUtc,
+            CreatedAtISO: incident.GetCreatedAtUtc() ?? nowUtc,
+            UpdatedAt: incident.GetUpdatedAtUtc() ?? nowUtc,
+            UpdatedAtISO: incident.GetUpdatedAtUtc() ?? nowUtc,
+            DispatchedAt: null)
+        : incident.Details with
+        {
+            Id = string.IsNullOrWhiteSpace(incident.Details.Id) ? incident.GetCallIdentifier() : incident.Details.Id,
+            Source = string.IsNullOrWhiteSpace(incident.Details.Source) ? client.ClientId : incident.Details.Source,
+            Agency = string.IsNullOrWhiteSpace(incident.Details.Agency) ? client.Name : incident.Details.Agency,
+            Status = string.IsNullOrWhiteSpace(incident.Details.Status) ? (incident.Details.Closed == true ? "Closed" : "Open") : incident.Details.Status,
+            CreatedAt = incident.Details.CreatedAt ?? incident.Details.CreatedAtISO ?? incident.GetCreatedAtUtc() ?? nowUtc,
+            CreatedAtISO = incident.Details.CreatedAtISO ?? incident.Details.CreatedAt ?? incident.GetCreatedAtUtc() ?? nowUtc,
+            UpdatedAt = incident.Details.UpdatedAt ?? incident.Details.UpdatedAtISO ?? incident.GetUpdatedAtUtc() ?? nowUtc,
+            UpdatedAtISO = incident.Details.UpdatedAtISO ?? incident.Details.UpdatedAt ?? incident.GetUpdatedAtUtc() ?? nowUtc
+        };
+
+    var headers = incident.Headers is null && (!string.IsNullOrWhiteSpace(incident.Address) || !string.IsNullOrWhiteSpace(incident.GetCallType()) || !string.IsNullOrWhiteSpace(incident.GetPriority()))
+        ? new Headers(
+            Address: incident.GetAddress(),
+            LocationName: incident.GetLocationName(),
+            Coordinates: BuildCoordinates(incident),
+            Latitude: incident.GetLatitude(),
+            Longitude: incident.GetLongitude(),
+            ApproximatedLocation: null,
+            Priority: incident.GetPriority(),
+            Type: incident.GetCallType())
+        : incident.Headers;
+
+    return incident with { Details = details, Headers = headers };
+}
+
+static string? BuildCoordinates(EmergencyCallUnified incident)
+{
+    if (!string.IsNullOrWhiteSpace(incident.Headers?.Coordinates))
+        return incident.Headers.Coordinates;
+
+    var latitude = incident.GetLatitude();
+    var longitude = incident.GetLongitude();
+    return latitude.HasValue && longitude.HasValue
+        ? $"{latitude.Value},{longitude.Value}"
+        : null;
+}
+
+static async Task EnsureIngestSchemaAsync(AppDbContext db)
+{
+    if (!db.Database.IsSqlServer())
+        return;
+
+    const string sql = @"
+IF OBJECT_ID(N'[dbo].[IngestedIncidents]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[IngestedIncidents]
+    (
+        [Id] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [ApiClientId] INT NOT NULL,
+        [AgencyId] INT NOT NULL,
+        [IncidentId] NVARCHAR(128) NOT NULL,
+        [CanonicalJson] NVARCHAR(MAX) NOT NULL,
+        [Status] NVARCHAR(64) NULL,
+        [IsClosed] BIT NOT NULL CONSTRAINT [DF_IngestedIncidents_IsClosed] DEFAULT(0),
+        [Agency] NVARCHAR(256) NULL,
+        [Address] NVARCHAR(512) NULL,
+        [CallType] NVARCHAR(256) NULL,
+        [UpdatedAtUtc] DATETIME2 NULL,
+        [ReceivedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_IngestedIncidents_ReceivedAtUtc] DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT [FK_IngestedIncidents_ApiClients_ApiClientId] FOREIGN KEY ([ApiClientId]) REFERENCES [dbo].[ApiClients]([Id]) ON DELETE CASCADE
+    );
+    CREATE UNIQUE INDEX [IX_IngestedIncidents_ApiClientId_IncidentId] ON [dbo].[IngestedIncidents]([ApiClientId], [IncidentId]);
+    CREATE INDEX [IX_IngestedIncidents_ApiClientId_UpdatedAtUtc] ON [dbo].[IngestedIncidents]([ApiClientId], [UpdatedAtUtc]);
+END";
+
+    await db.Database.ExecuteSqlRawAsync(sql);
+}
 static async Task<List<string>> DiscoverRetiredTablesAsync(AppDbContext db)
 {
     var known = new[]

@@ -76,11 +76,16 @@ public sealed class IncidentStore(ServiceDbContext db, ILogger<IncidentStore> lo
         return db.SaveChangesAsync(cancellationToken);
     }
 
-    public Task<List<PrintLedgerEntity>> GetPendingPrintJobsAsync(CancellationToken cancellationToken) =>
-        db.PrintLedger
+    public async Task<List<PrintLedgerEntity>> GetPendingPrintJobsAsync(CancellationToken cancellationToken)
+    {
+        var pending = await db.PrintLedger
             .Where(x => x.PrintedAtUtc == null && x.AttemptCount < 10)
-            .OrderBy(x => x.CreatedAtUtc)
             .ToListAsync(cancellationToken);
+
+        return pending
+            .OrderBy(x => x.CreatedAtUtc.UtcDateTime)
+            .ToList();
+    }
 
     public async Task<PrintLedgerEntity> CreatePrintLedgerEntryAsync(IncidentEnvelope incident, string outputPath, string payloadSummary, string templateKind, CancellationToken cancellationToken)
     {
@@ -100,7 +105,6 @@ public sealed class IncidentStore(ServiceDbContext db, ILogger<IncidentStore> lo
         await db.SaveChangesAsync(cancellationToken);
         return entry;
     }
-
     public async Task MarkPrintCompletedAsync(PrintLedgerEntity entry, string status, string? error, CancellationToken cancellationToken)
     {
         entry.Status = status;

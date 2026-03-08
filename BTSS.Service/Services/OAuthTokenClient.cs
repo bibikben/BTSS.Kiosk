@@ -13,8 +13,12 @@ public sealed class OAuthTokenClient(HttpClient httpClient, IOptions<ServiceRunt
 
     public async Task<AuthenticationHeaderValue?> CreateHeaderAsync(CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(_options.ClientId) || string.IsNullOrWhiteSpace(_options.ClientSecret) || string.IsNullOrWhiteSpace(_options.OAuthTokenPath))
+        if (string.IsNullOrWhiteSpace(_options.ClientId) ||
+            string.IsNullOrWhiteSpace(_options.ClientSecret) ||
+            string.IsNullOrWhiteSpace(_options.OAuthTokenPath))
+        {
             return null;
+        }
 
         if (!string.IsNullOrWhiteSpace(_token) && _expiresAtUtc > DateTimeOffset.UtcNow.AddMinutes(1))
             return new AuthenticationHeaderValue("Bearer", _token);
@@ -32,11 +36,31 @@ public sealed class OAuthTokenClient(HttpClient httpClient, IOptions<ServiceRunt
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        response.EnsureSuccessStatusCode();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            logger.LogError(
+                "OAuth token request failed. Status={StatusCode}, ClientId={ClientId}, Scope={Scope}, TokenPath={TokenPath}, Response={ResponseBody}",
+                (int)response.StatusCode,
+                _options.ClientId,
+                _options.Scope,
+                _options.OAuthTokenPath,
+                body);
+
+            throw new HttpRequestException(
+                $"OAuth token request failed with status {(int)response.StatusCode} ({response.StatusCode}). Response: {body}");
+        }
 
         using var document = JsonDocument.Parse(body);
         _token = document.RootElement.GetProperty("access_token").GetString();
-        var expiresIn = document.RootElement.TryGetProperty("expires_in", out var expiresEl) ? expiresEl.GetInt32() : 3600;
+
+        if (string.IsNullOrWhiteSpace(_token))
+            throw new InvalidOperationException("OAuth token response did not contain access_token.");
+
+        var expiresIn = document.RootElement.TryGetProperty("expires_in", out var expiresEl)
+            ? expiresEl.GetInt32()
+            : 3600;
+
         _expiresAtUtc = DateTimeOffset.UtcNow.AddSeconds(expiresIn);
 
         logger.LogInformation("Acquired service access token expiring at {ExpiresAtUtc}.", _expiresAtUtc);

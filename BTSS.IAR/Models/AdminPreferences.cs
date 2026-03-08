@@ -2,7 +2,7 @@ namespace BTSS.IAR.Models;
 
 public sealed class AdminPreferences
 {
-    public string ApiBaseUrl { get; set; } = "https://localhost:5001";
+    public string ApiBaseUrl { get; set; } = "https://localhost:56800/";
     public string ClientId { get; set; } = string.Empty;
     public string ClientSecret { get; set; } = string.Empty;
     public string Scope { get; set; } = "clients.read clients.write global-settings.read global-settings.write device-settings.read device-settings.write display.read display.write kiosk.commands service.poll";

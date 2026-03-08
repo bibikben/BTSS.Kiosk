@@ -3,6 +3,7 @@ using BTSS.Service.Options;
 using BTSS.Service.Services;
 using BTSS.Service.Workers;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -19,23 +20,43 @@ builder.Services.AddOptions<ServiceRuntimeOptions>()
 builder.Services.PostConfigure<ServiceRuntimeOptions>(options =>
 {
     LegacyServiceOptionsCompatibility.Apply(builder.Configuration, options);
+
+    if (string.IsNullOrWhiteSpace(options.ApiBaseUrl) ||
+        !Uri.TryCreate(options.ApiBaseUrl, UriKind.Absolute, out _))
+    {
+        throw new InvalidOperationException("Service:ApiBaseUrl must be a valid absolute URI.");
+    }
 });
+
 builder.Services.AddDbContext<ServiceDbContext>((sp, options) =>
 {
-    var runtime = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<ServiceRuntimeOptions>>().Value;
+    var runtime = sp.GetRequiredService<IOptions<ServiceRuntimeOptions>>().Value;
     var dbPath = runtime.ResolveDatabasePath();
     Directory.CreateDirectory(Path.GetDirectoryName(dbPath)!);
     options.UseSqlite($"Data Source={dbPath}");
 });
 
-builder.Services.AddHttpClient<OAuthTokenClient>();
-builder.Services.AddHttpClient<IncidentPollingClient>((sp, client) =>
+builder.Services.AddHttpClient<OAuthTokenClient>((sp, client) =>
 {
-    var runtime = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<ServiceRuntimeOptions>>().Value;
+    var runtime = sp.GetRequiredService<IOptions<ServiceRuntimeOptions>>().Value;
+
     if (!string.IsNullOrWhiteSpace(runtime.ApiBaseUrl))
     {
         client.BaseAddress = new Uri(runtime.ApiBaseUrl, UriKind.Absolute);
     }
+
+    client.Timeout = TimeSpan.FromSeconds(Math.Max(15, runtime.HttpTimeoutSeconds));
+});
+
+builder.Services.AddHttpClient<IncidentPollingClient>((sp, client) =>
+{
+    var runtime = sp.GetRequiredService<IOptions<ServiceRuntimeOptions>>().Value;
+
+    if (!string.IsNullOrWhiteSpace(runtime.ApiBaseUrl))
+    {
+        client.BaseAddress = new Uri(runtime.ApiBaseUrl, UriKind.Absolute);
+    }
+
     client.Timeout = TimeSpan.FromSeconds(Math.Max(15, runtime.HttpTimeoutSeconds));
 });
 
@@ -46,9 +67,11 @@ builder.Services.AddScoped<IPrintDispatcher, PrintDispatcher>();
 builder.Services.AddHostedService<CallPollingWorker>();
 
 var app = builder.Build();
+
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<ServiceDbContext>();
     await db.Database.EnsureCreatedAsync();
 }
+
 await app.RunAsync();

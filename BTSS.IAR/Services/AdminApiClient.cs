@@ -29,7 +29,12 @@ public sealed class AdminApiClient(HttpClient httpClient)
 
         using var response = await httpClient.SendAsync(request, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
-        response.EnsureSuccessStatusCode();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new HttpRequestException(
+                $"Token request failed with status {(int)response.StatusCode} ({response.StatusCode}). Response: {body}");
+        }
 
         var node = JsonNode.Parse(body)?.AsObject() ?? new JsonObject();
         return new TokenResponse
@@ -170,7 +175,7 @@ public sealed class AdminApiClient(HttpClient httpClient)
 
     private static string NormalizeBaseUrl(string value)
     {
-        if (string.IsNullOrWhiteSpace(value)) return "https://localhost:5001/";
+        if (string.IsNullOrWhiteSpace(value)) return "https://localhost:56800/";
         return value.EndsWith('/') ? value : value + "/";
     }
 }
