@@ -1547,6 +1547,7 @@ app.MapPost("/auth/device-login", async (HumanAuthService auth, HumanLoginReques
 })
 .AllowAnonymous();
 
+app.MapHumanAdminEndpoints();
 app.MapGet("/admin/bootstrap", async (AppDbContext db, CancellationToken ct) =>
 {
     var agencies = await db.Agencies.Where(x => x.IsEnabled).OrderBy(x => x.Name).Select(x => new { x.Id, x.Code, x.Name }).ToListAsync(ct);

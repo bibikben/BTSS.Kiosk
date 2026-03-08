@@ -1,0 +1,25 @@
+@page "/admin/diagnostics"
+@inject HttpClient Http
+
+<PageTitle>Diagnostics</PageTitle>
+
+<RadzenTabs>
+    <RadzenTabsItem Text="Snapshot">
+        <pre>@json</pre>
+    </RadzenTabsItem>
+    <RadzenTabsItem Text="Status Codes">
+        <RadzenDataGrid Data="statuses" TItem="StatusCodeLookupDto">
+            <Columns>
+                <RadzenDataGridColumn TItem="StatusCodeLookupDto" Property="RawCode" Title="Raw" />
+                <RadzenDataGridColumn TItem="StatusCodeLookupDto" Property="NormalizedCode" Title="Normalized" />
+                <RadzenDataGridColumn TItem="StatusCodeLookupDto" Property="Description" Title="Description" />
+            </Columns>
+        </RadzenDataGrid>
+    </RadzenTabsItem>
+</RadzenTabs>
+
+@code {
+    private string json = string.Empty;
+    private List<StatusCodeLookupDto> statuses = new();
+    protected override async Task OnInitializedAsync() { json = await Http.GetStringAsync("/admin/diagnostics"); statuses = await Http.GetFromJsonAsync<List<StatusCodeLookupDto>>("/api/lookups/status-codes") ?? new(); }
+}

@@ -1,0 +1,43 @@
+@page "/incidents"
+@inject HttpClient Http
+@inject NavigationManager Navigation
+
+<PageTitle>Incidents</PageTitle>
+
+<RadzenStack Gap="1rem">
+    <RadzenRow Gap="1rem">
+        <RadzenColumn Size="12" SizeMD="3"><RadzenTextBox @bind-Value="search" Placeholder="Search incident, address, type" Style="width:100%" /></RadzenColumn>
+        <RadzenColumn Size="12" SizeMD="2"><RadzenDropDown @bind-Value="status" Data="statuses" Placeholder="Status" Style="width:100%" /></RadzenColumn>
+        <RadzenColumn Size="12" SizeMD="2"><RadzenButton Text="Refresh" Click="LoadAsync" /></RadzenColumn>
+    </RadzenRow>
+    <RadzenDataGrid Data="filtered" TItem="IncidentListItemDto" AllowPaging="true" PageSize="20" RowSelect="OpenIncident">
+        <Columns>
+            <RadzenDataGridColumn TItem="IncidentListItemDto" Property="ExternalIncidentId" Title="Incident ID" />
+            <RadzenDataGridColumn TItem="IncidentListItemDto" Property="Address" Title="Address" />
+            <RadzenDataGridColumn TItem="IncidentListItemDto" Property="Type" Title="Type" />
+            <RadzenDataGridColumn TItem="IncidentListItemDto" Property="Priority" Title="Priority" />
+            <RadzenDataGridColumn TItem="IncidentListItemDto" Property="Status" Title="Status" />
+            <RadzenDataGridColumn TItem="IncidentListItemDto" Property="DispatchedAtUtc" Title="Dispatched" />
+            <RadzenDataGridColumn TItem="IncidentListItemDto" Property="AgencyCount" Title="Agencies" />
+        </Columns>
+    </RadzenDataGrid>
+</RadzenStack>
+
+@code {
+    private List<IncidentListItemDto> incidents = new();
+    private string? search;
+    private string? status;
+    private readonly string[] statuses = ["Open", "Closed", "Dispatched", "Enroute", "Arrived", "Cleared", "In Quarters"];
+    private IEnumerable<IncidentListItemDto> filtered => incidents.Where(x =>
+        (string.IsNullOrWhiteSpace(search) || ($"{x.ExternalIncidentId} {x.Address} {x.Type} {x.Priority}".Contains(search, StringComparison.OrdinalIgnoreCase))) &&
+        (string.IsNullOrWhiteSpace(status) || string.Equals(x.Status, status, StringComparison.OrdinalIgnoreCase)));
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        incidents = await Http.GetFromJsonAsync<List<IncidentListItemDto>>("/api/incidents?take=250") ?? new();
+    }
+
+    private void OpenIncident(IncidentListItemDto item) => Navigation.NavigateTo($"/incidents/{item.Id}");
+}

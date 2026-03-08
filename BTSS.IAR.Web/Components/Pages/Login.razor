@@ -13,6 +13,7 @@
                 <RadzenText TextStyle="TextStyle.Body1">Shared identity for BTSS.Web and kiosk admin access.</RadzenText>
                 <RadzenTextBox @bind-Value="model.UserName" Name="username" Placeholder="Username" Style="width:100%" />
                 <RadzenPassword @bind-Value="model.Password" Name="password" Placeholder="Password" Style="width:100%" />
+                <RadzenCheckBox @bind-Value="rememberMe" /> <RadzenText>Remember me</RadzenText>
                 <RadzenDropDown TValue="int?" Data="agencies" TextProperty="AgencyName" ValueProperty="AgencyId" @bind-Value="model.AgencyId" Placeholder="Agency context (optional)" Style="width:100%" />
                 @if (!string.IsNullOrWhiteSpace(error))
                 {
@@ -28,6 +29,7 @@
 @code {
     private HumanLoginRequest model = new(null, null, null);
     private string? error;
+    private bool rememberMe = true;
     private AgencyMembershipDto[] agencies = Array.Empty<AgencyMembershipDto>();
 
     protected override async Task OnInitializedAsync()
@@ -52,7 +54,8 @@
         {
             var current = await response.Content.ReadFromJsonAsync<CurrentUserDto>();
             agencies = current?.Agencies ?? Array.Empty<AgencyMembershipDto>();
-            Navigation.NavigateTo("/", true);
+            if ((current?.Agencies?.Length ?? 0) > 1 && current?.ActiveAgencyId is null) Navigation.NavigateTo("/agency-chooser", true);
+            else Navigation.NavigateTo("/", true);
             return;
         }
 

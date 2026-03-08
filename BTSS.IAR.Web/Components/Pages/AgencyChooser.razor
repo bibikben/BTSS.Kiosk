@@ -1,0 +1,59 @@
+@page "/agency-chooser"
+@inject HttpClient Http
+@inject NavigationManager Navigation
+
+<PageTitle>Choose Agency</PageTitle>
+
+@if (currentUser is null)
+{
+    <RadzenText>Loading agencies...</RadzenText>
+}
+else
+{
+    <RadzenStack Gap="1rem">
+        <RadzenText TextStyle="TextStyle.DisplayH5">Choose active agency</RadzenText>
+        <RadzenRow Gap="1rem">
+            @foreach (var agency in currentUser.Agencies)
+            {
+                <RadzenColumn Size="12" SizeMD="6" SizeLG="4">
+                    <RadzenCard Variant="Variant.Outlined" Style="cursor:pointer" class="@(selectedAgencyId == agency.AgencyId ? "rz-border-primary" : string.Empty)" @onclick="() => selectedAgencyId = agency.AgencyId">
+                        <RadzenStack Gap="0.25rem">
+                            <RadzenText TextStyle="TextStyle.H6">@agency.AgencyName</RadzenText>
+                            <RadzenText TextStyle="TextStyle.Body2">@agency.AgencyCode</RadzenText>
+                            @if (agency.IsDefault)
+                            {
+                                <RadzenBadge Text="Default" BadgeStyle="BadgeStyle.Info" />
+                            }
+                        </RadzenStack>
+                    </RadzenCard>
+                </RadzenColumn>
+            }
+        </RadzenRow>
+        <RadzenButton Text="Continue" ButtonStyle="ButtonStyle.Primary" Click="ContinueAsync" Disabled="@(selectedAgencyId is null)" />
+    </RadzenStack>
+}
+
+@code {
+    private CurrentUserDto? currentUser;
+    private int? selectedAgencyId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        currentUser = await Http.GetFromJsonAsync<CurrentUserDto>("/auth/me");
+        if (currentUser is null)
+        {
+            Navigation.NavigateTo("/login", true);
+            return;
+        }
+        selectedAgencyId = currentUser.ActiveAgencyId ?? currentUser.Agencies.FirstOrDefault()?.AgencyId;
+        if (currentUser.Agencies.Length <= 1 && selectedAgencyId.HasValue)
+            await ContinueAsync();
+    }
+
+    private async Task ContinueAsync()
+    {
+        if (!selectedAgencyId.HasValue) return;
+        var response = await Http.PostAsJsonAsync("/auth/switch-agency", new SwitchAgencyRequest(selectedAgencyId.Value));
+        if (response.IsSuccessStatusCode) Navigation.NavigateTo("/", true);
+    }
+}

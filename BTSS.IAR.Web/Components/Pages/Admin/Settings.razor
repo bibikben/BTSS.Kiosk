@@ -1,0 +1,17 @@
+@page "/admin/settings"
+@inject HttpClient Http
+
+<PageTitle>Settings</PageTitle>
+
+<RadzenStack Gap="1rem">
+    <RadzenText TextStyle="TextStyle.H5">Agency settings</RadzenText>
+    <RadzenTextArea @bind-Value="json" Style="width:100%; min-height: 360px" />
+    <RadzenButton Text="Save" ButtonStyle="ButtonStyle.Primary" Click="SaveAsync" />
+</RadzenStack>
+
+@code {
+    private SettingsEnvelopeDto? settings;
+    private string json = "{}";
+    protected override async Task OnInitializedAsync() { settings = await Http.GetFromJsonAsync<SettingsEnvelopeDto>("/admin/settings"); json = settings?.Settings.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) ?? "{}"; }
+    private async Task SaveAsync() { var parsed = System.Text.Json.Nodes.JsonNode.Parse(json) as System.Text.Json.Nodes.JsonObject ?? new(); settings ??= new SettingsEnvelopeDto(0, parsed, null); var req = new SettingsEnvelopeDto(settings.AgencyId, parsed, settings.UpdatedAtUtc); var resp = await Http.PutAsJsonAsync("/admin/settings", req); if (resp.IsSuccessStatusCode) settings = await resp.Content.ReadFromJsonAsync<SettingsEnvelopeDto>(); }
+}

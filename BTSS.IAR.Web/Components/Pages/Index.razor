@@ -1,14 +1,16 @@
 @page "/"
 @inject HttpClient Http
+@inject NavigationManager Navigation
 
 <PageTitle>BTSS Admin</PageTitle>
 
-@if (currentUser is null)
+@if (currentUser is null || summary is null)
 {
     <RadzenText>Loading...</RadzenText>
 }
 else
 {
+    <RadzenStack Gap="1rem">
     <RadzenRow Gap="1rem">
         <RadzenColumn Size="12">
             <RadzenText TextStyle="TextStyle.DisplayH4">BTSS Admin Dashboard</RadzenText>
@@ -19,32 +21,46 @@ else
                 <RadzenStack Gap="0.5rem">
                     <RadzenText TextStyle="TextStyle.H6">Active agency</RadzenText>
                     <RadzenDropDown TValue="int?" Data="currentUser.Agencies" TextProperty="AgencyName" ValueProperty="AgencyId" @bind-Value="selectedAgencyId" Change="OnAgencyChanged" Style="width:100%" />
-                    <RadzenText TextStyle="TextStyle.Caption">Super user: @currentUser.IsSuperUser</RadzenText>
+                        <RadzenButton Text="Choose agency" Variant="Variant.Flat" Click="@(() => Navigation.NavigateTo("/agency-chooser"))" />
                 </RadzenStack>
             </RadzenCard>
         </RadzenColumn>
         <RadzenColumn Size="12" SizeLG="8">
             <RadzenCard>
                 <RadzenText TextStyle="TextStyle.H6">Granted permissions</RadzenText>
-                <RadzenWrap Gap="0.5rem" class="rz-mt-3">
+                <RadzenStack Gap="0.5rem" class="rz-mt-3">
                     @foreach (var permission in currentUser.Permissions)
                     {
                         <RadzenBadge Text="@permission" />
                     }
-                </RadzenWrap>
+                </RadzenStack>
             </RadzenCard>
         </RadzenColumn>
     </RadzenRow>
+        <RadzenRow Gap="1rem">
+            <RadzenColumn Size="12" SizeMD="6" SizeLG="3"><RadzenCard><RadzenText TextStyle="TextStyle.H6">Open incidents</RadzenText><RadzenText TextStyle="TextStyle.DisplayH5">@summary.OpenIncidents</RadzenText></RadzenCard></RadzenColumn>
+            <RadzenColumn Size="12" SizeMD="6" SizeLG="3"><RadzenCard><RadzenText TextStyle="TextStyle.H6">Closed today</RadzenText><RadzenText TextStyle="TextStyle.DisplayH5">@summary.ClosedToday</RadzenText></RadzenCard></RadzenColumn>
+            <RadzenColumn Size="12" SizeMD="6" SizeLG="3"><RadzenCard><RadzenText TextStyle="TextStyle.H6">Units active</RadzenText><RadzenText TextStyle="TextStyle.DisplayH5">@summary.UnitsActive</RadzenText></RadzenCard></RadzenColumn>
+            <RadzenColumn Size="12" SizeMD="6" SizeLG="3"><RadzenCard><RadzenText TextStyle="TextStyle.H6">Alerts</RadzenText><RadzenText TextStyle="TextStyle.DisplayH5">@summary.Alerts</RadzenText></RadzenCard></RadzenColumn>
+        </RadzenRow>
+        <RadzenRow Gap="1rem">
+            <RadzenColumn Size="12" SizeLG="4"><RadzenButton Text="Incidents" Style="width:100%" Click="@(() => Navigation.NavigateTo("/incidents"))" /></RadzenColumn>
+            <RadzenColumn Size="12" SizeLG="4"><RadzenButton Text="Reports" Style="width:100%" Click="@(() => Navigation.NavigateTo("/reports"))" /></RadzenColumn>
+            <RadzenColumn Size="12" SizeLG="4"><RadzenButton Text="Devices" Style="width:100%" Click="@(() => Navigation.NavigateTo("/admin/devices"))" /></RadzenColumn>
+        </RadzenRow>
+    </RadzenStack>
 }
 
 @code {
     private CurrentUserDto? currentUser;
+    private DashboardSummaryDto? summary;
     private int? selectedAgencyId;
 
     protected override async Task OnInitializedAsync()
     {
         currentUser = await Http.GetFromJsonAsync<CurrentUserDto>("/auth/me");
         selectedAgencyId = currentUser?.ActiveAgencyId;
+        summary = await Http.GetFromJsonAsync<DashboardSummaryDto>("/admin/dashboard");
     }
 
     private async Task OnAgencyChanged(object value)
@@ -56,6 +72,7 @@ else
             {
                 currentUser = await response.Content.ReadFromJsonAsync<CurrentUserDto>();
                 selectedAgencyId = currentUser?.ActiveAgencyId;
+                summary = await Http.GetFromJsonAsync<DashboardSummaryDto>("/admin/dashboard");
             }
         }
     }

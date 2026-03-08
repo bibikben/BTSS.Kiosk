@@ -1,0 +1,37 @@
+@page "/admin/agencies"
+@inject HttpClient Http
+
+<PageTitle>Agencies</PageTitle>
+
+<RadzenStack Gap="1rem">
+    <RadzenButton Text="New Agency" Icon="add_circle" Click="NewAgency" />
+    <RadzenDataGrid Data="agencies" TItem="AgencyAdminDto" RowSelect="EditAgency">
+        <Columns>
+            <RadzenDataGridColumn TItem="AgencyAdminDto" Property="Code" Title="Code" />
+            <RadzenDataGridColumn TItem="AgencyAdminDto" Property="Name" Title="Name" />
+            <RadzenDataGridColumn TItem="AgencyAdminDto" Property="IsEnabled" Title="Active" />
+            <RadzenDataGridColumn TItem="AgencyAdminDto" Property="UserCount" Title="Users" />
+            <RadzenDataGridColumn TItem="AgencyAdminDto" Property="DeviceCount" Title="Devices" />
+        </Columns>
+    </RadzenDataGrid>
+    @if (editing is not null)
+    {
+        <RadzenCard>
+            <RadzenTextBox @bind-Value="editing.Code" Placeholder="Code" Style="width:100%" />
+            <RadzenTextBox @bind-Value="editing.Name" Placeholder="Name" Style="width:100%" />
+            <RadzenCheckBox @bind-Value="editing.IsEnabled" /> <RadzenText>Enabled</RadzenText>
+            <RadzenButton Text="Save" Click="SaveAsync" />
+        </RadzenCard>
+    }
+</RadzenStack>
+
+@code {
+    private List<AgencyAdminDto> agencies = new();
+    private EditableAgency? editing;
+    protected override Task OnInitializedAsync() => ReloadAsync();
+    private async Task ReloadAsync() => agencies = await Http.GetFromJsonAsync<List<AgencyAdminDto>>("/admin/agencies") ?? new();
+    private void NewAgency() => editing = new();
+    private void EditAgency(AgencyAdminDto agency) => editing = new EditableAgency { Id = agency.Id, Code = agency.Code, Name = agency.Name, IsEnabled = agency.IsEnabled };
+    private async Task SaveAsync() { if (editing is null) return; var req = new AgencyUpsertRequest(editing.Code ?? "", editing.Name ?? "", editing.IsEnabled); var resp = editing.Id == 0 ? await Http.PostAsJsonAsync("/admin/agencies", req) : await Http.PutAsJsonAsync($"/admin/agencies/{editing.Id}", req); if (resp.IsSuccessStatusCode) { editing = null; await ReloadAsync(); } }
+    private sealed class EditableAgency { public int Id { get; set; } public string? Code { get; set; } public string? Name { get; set; } public bool IsEnabled { get; set; } = true; }
+}

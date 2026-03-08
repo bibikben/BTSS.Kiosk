@@ -1,0 +1,38 @@
+@page "/admin/roles"
+@inject HttpClient Http
+
+<PageTitle>Roles</PageTitle>
+
+<RadzenStack Gap="1rem">
+    <RadzenButton Text="New Role" Icon="add_circle" Click="NewRole" />
+    <RadzenDataGrid Data="roles" TItem="RoleAdminDto" RowSelect="EditRole">
+        <Columns>
+            <RadzenDataGridColumn TItem="RoleAdminDto" Property="Name" Title="Role" />
+            <RadzenDataGridColumn TItem="RoleAdminDto" Property="Description" Title="Description" />
+            <RadzenDataGridColumn TItem="RoleAdminDto" Property="IsSystemRole" Title="System" />
+        </Columns>
+    </RadzenDataGrid>
+    @if (editing is not null)
+    {
+        <RadzenCard>
+            <RadzenTextBox @bind-Value="editing.Name" Placeholder="Role name" Style="width:100%" />
+            <RadzenTextArea @bind-Value="editing.Description" Placeholder="Description" Style="width:100%" />
+            <RadzenCheckBox @bind-Value="editing.IsSystemRole" /> <RadzenText>System role</RadzenText>
+            <RadzenDropDown Multiple="true" Chips="true" Data="permissions" TextProperty="Code" ValueProperty="Code" @bind-Value="selectedPermissions" Placeholder="Permissions" Style="width:100%" />
+            <RadzenButton Text="Save" Click="SaveAsync" />
+        </RadzenCard>
+    }
+</RadzenStack>
+
+@code {
+    private List<RoleAdminDto> roles = new();
+    private List<PermissionDefinition> permissions = new();
+    private EditableRole? editing;
+    private IEnumerable<string> selectedPermissions = Array.Empty<string>();
+    protected override async Task OnInitializedAsync() { await ReloadAsync(); permissions = await Http.GetFromJsonAsync<List<PermissionDefinition>>("/api/lookups/permissions") ?? new(); }
+    private async Task ReloadAsync() => roles = await Http.GetFromJsonAsync<List<RoleAdminDto>>("/admin/roles") ?? new();
+    private void NewRole() { editing = new(); selectedPermissions = Array.Empty<string>(); }
+    private void EditRole(RoleAdminDto role) { editing = new EditableRole { Id = role.Id, Name = role.Name, Description = role.Description, IsSystemRole = role.IsSystemRole }; selectedPermissions = role.PermissionCodes; }
+    private async Task SaveAsync() { if (editing is null) return; var req = new RoleUpsertRequest(editing.Name ?? "", editing.Description ?? "", editing.IsSystemRole, selectedPermissions.ToArray()); var resp = editing.Id == 0 ? await Http.PostAsJsonAsync("/admin/roles", req) : await Http.PutAsJsonAsync($"/admin/roles/{editing.Id}", req); if (resp.IsSuccessStatusCode) { editing = null; await ReloadAsync(); } }
+    private sealed class EditableRole { public int Id { get; set; } public string? Name { get; set; } public string? Description { get; set; } public bool IsSystemRole { get; set; } }
+}

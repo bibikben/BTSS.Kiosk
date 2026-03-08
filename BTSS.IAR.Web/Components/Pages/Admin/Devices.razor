@@ -1,0 +1,19 @@
+@page "/admin/devices"
+@inject HttpClient Http
+
+<PageTitle>Devices</PageTitle>
+
+<RadzenDataGrid Data="devices" TItem="DeviceAdminDto" AllowPaging="true" PageSize="20">
+    <Columns>
+        <RadzenDataGridColumn TItem="DeviceAdminDto" Property="DeviceId" Title="Device" />
+        <RadzenDataGridColumn TItem="DeviceAdminDto" Property="AgencyName" Title="Agency" />
+        <RadzenDataGridColumn TItem="DeviceAdminDto" Property="ClientName" Title="Client" />
+        <RadzenDataGridColumn TItem="DeviceAdminDto" Property="DeviceName" Title="Name" />
+        <RadzenDataGridColumn TItem="DeviceAdminDto" Property="MachineName" Title="Machine" />
+        <RadzenDataGridColumn TItem="DeviceAdminDto" Property="DeviceType" Title="Type" />
+        <RadzenDataGridColumn TItem="DeviceAdminDto" Property="IsEnabled" Title="Enabled" />
+        <RadzenDataGridColumn TItem="DeviceAdminDto" Property="UpdatedAtUtc" Title="Last Sync" />
+    </Columns>
+</RadzenDataGrid>
+
+@code { private List<DeviceAdminDto> devices = new(); protected override async Task OnInitializedAsync() => devices = await Http.GetFromJsonAsync<List<DeviceAdminDto>>("/admin/devices") ?? new(); }

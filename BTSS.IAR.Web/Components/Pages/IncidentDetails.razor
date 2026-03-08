@@ -1,0 +1,78 @@
+@page "/incidents/{Id:long}"
+@inject HttpClient Http
+
+<PageTitle>Incident Details</PageTitle>
+
+@if (detail is null)
+{
+    <RadzenText>Loading incident...</RadzenText>
+}
+else
+{
+    <RadzenStack Gap="1rem">
+        <RadzenText TextStyle="TextStyle.DisplayH5">Incident @detail.ExternalIncidentId</RadzenText>
+        <RadzenText TextStyle="TextStyle.Body1">@detail.Type • @detail.Address • @detail.Status</RadzenText>
+        <RadzenTabs>
+            <RadzenTabsItem Text="Summary">
+                <RadzenCard>
+                    <RadzenText>Priority: @detail.Priority</RadzenText><br />
+                    <RadzenText>Location: @detail.LocationName</RadzenText><br />
+                    <RadzenText>Primary agency: @detail.AgencyPrimaryId</RadzenText>
+                </RadzenCard>
+            </RadzenTabsItem>
+            <RadzenTabsItem Text="Units">
+                <RadzenDataGrid Data="units" TItem="IncidentUnitDto">
+                    <Columns>
+                        <RadzenDataGridColumn TItem="IncidentUnitDto" Property="UnitIdentifier" Title="Unit" />
+                        <RadzenDataGridColumn TItem="IncidentUnitDto" Property="CurrentStatus" Title="Status" />
+                        <RadzenDataGridColumn TItem="IncidentUnitDto" Property="Station" Title="Station" />
+                        <RadzenDataGridColumn TItem="IncidentUnitDto" Property="UnitType" Title="Type" />
+                    </Columns>
+                </RadzenDataGrid>
+            </RadzenTabsItem>
+            <RadzenTabsItem Text="Comments">
+                <RadzenDataList Data="comments" TItem="IncidentCommentDto">
+                    <Template Context="comment">
+                        <RadzenCard class="rz-mb-2">
+                            <RadzenText>@comment.Message</RadzenText><br />
+                            <RadzenText TextStyle="TextStyle.Caption">@comment.OccurredAtUtc • @comment.CreatedBy / @comment.CreatedAgency</RadzenText>
+                        </RadzenCard>
+                    </Template>
+                </RadzenDataList>
+            </RadzenTabsItem>
+            <RadzenTabsItem Text="Timeline">
+                <RadzenDataGrid Data="timeline" TItem="UnitTimelineFactDto">
+                    <Columns>
+                        <RadzenDataGridColumn TItem="UnitTimelineFactDto" Property="UnitIdentifier" Title="Unit" />
+                        <RadzenDataGridColumn TItem="UnitTimelineFactDto" Property="DispatchedAtUtc" Title="Dispatched" />
+                        <RadzenDataGridColumn TItem="UnitTimelineFactDto" Property="EnrouteAtUtc" Title="Enroute" />
+                        <RadzenDataGridColumn TItem="UnitTimelineFactDto" Property="ArrivedAtUtc" Title="Arrived" />
+                        <RadzenDataGridColumn TItem="UnitTimelineFactDto" Property="ClearedAtUtc" Title="Cleared" />
+                        <RadzenDataGridColumn TItem="UnitTimelineFactDto" Property="InQuartersAtUtc" Title="In Quarters" />
+                    </Columns>
+                </RadzenDataGrid>
+            </RadzenTabsItem>
+            <RadzenTabsItem Text="Raw data">
+                <pre>@rawJson</pre>
+            </RadzenTabsItem>
+        </RadzenTabs>
+    </RadzenStack>
+}
+
+@code {
+    [Parameter] public long Id { get; set; }
+    private IncidentDetailDto? detail;
+    private List<IncidentUnitDto> units = new();
+    private List<IncidentCommentDto> comments = new();
+    private List<UnitTimelineFactDto> timeline = new();
+    private string rawJson = string.Empty;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        detail = await Http.GetFromJsonAsync<IncidentDetailDto>($"/api/incidents/{Id}");
+        units = await Http.GetFromJsonAsync<List<IncidentUnitDto>>($"/api/incidents/{Id}/units") ?? new();
+        comments = await Http.GetFromJsonAsync<List<IncidentCommentDto>>($"/api/incidents/{Id}/comments") ?? new();
+        timeline = await Http.GetFromJsonAsync<List<UnitTimelineFactDto>>($"/api/incidents/{Id}/timeline") ?? new();
+        rawJson = await Http.GetStringAsync($"/api/incidents/{Id}");
+    }
+}

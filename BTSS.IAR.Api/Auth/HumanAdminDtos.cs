@@ -1,0 +1,17 @@
+using System.Text.Json.Nodes;
+
+namespace BTSS.IAR.Api.Auth;
+
+public sealed record ScopeLookupDto(string Code, string Description, string Category);
+public sealed record StatusCodeLookupDto(string RawCode, string NormalizedCode, string Description);
+public sealed record AgencyAdminDto(int Id, string Code, string Name, bool IsEnabled, int UserCount, int DeviceCount, int IncidentCount);
+public sealed record AgencyUpsertRequest(string Code, string Name, bool IsEnabled);
+public sealed record RoleAdminDto(int Id, string Name, string Description, bool IsSystemRole, string[] PermissionCodes);
+public sealed record RoleUpsertRequest(string Name, string Description, bool IsSystemRole, string[] PermissionCodes);
+public sealed record UserAgencyAssignmentDto(int AgencyId, bool IsDefault, bool IsEnabled);
+public sealed record UserRoleAssignmentDto(int RoleId, int? AgencyId);
+public sealed record UserAdminDto(int Id, string UserName, string Email, string DisplayName, bool IsEnabled, bool IsSuperUser, int? ActiveAgencyId, UserAgencyAssignmentDto[] Agencies, UserRoleAssignmentDto[] Roles, string[] EffectivePermissions);
+public sealed record UserUpsertRequest(string UserName, string Email, string DisplayName, string? Password, bool IsEnabled, bool IsSuperUser, int? ActiveAgencyId, UserAgencyAssignmentDto[] Agencies, UserRoleAssignmentDto[] Roles);
+public sealed record DashboardSummaryDto(int? ActiveAgencyId, int OpenIncidents, int ClosedToday, int UnitsActive, int DevicesRegistered, int OfflineIndicators, int SavedReports, int PendingSync, int Alerts);
+public sealed record DeviceAdminDto(long Id, int ApiClientId, int AgencyId, string DeviceId, string? DeviceName, string? MachineName, string? DeviceType, bool IsEnabled, DateTime UpdatedAtUtc, JsonObject? Settings, string? ClientName, string? AgencyName);
+public sealed record SettingsEnvelopeDto(int AgencyId, JsonObject Settings, DateTime? UpdatedAtUtc);

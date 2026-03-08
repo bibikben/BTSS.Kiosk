@@ -35,12 +35,20 @@
         </RadzenStack>
         <RadzenPanelMenu>
             <RadzenPanelMenuItem Text="Dashboard" Path="/" Icon="dashboard" />
+            <RadzenPanelMenuItem Text="Incidents" Path="/incidents" Icon="warning" />
             <RadzenPanelMenuItem Text="Reports" Path="/reports" Icon="assessment" />
             <RadzenPanelMenuItem Text="Saved Reports" Path="/reports/saved" Icon="bookmark" />
             <RadzenPanelMenuItem Text="Report Designer" Path="/reports/designer" Icon="edit_note" />
+            <RadzenPanelMenuItem Text="Users" Path="/admin/users" Icon="group" />
+            <RadzenPanelMenuItem Text="Roles & Permissions" Path="/admin/roles" Icon="admin_panel_settings" />
+            <RadzenPanelMenuItem Text="Agencies" Path="/admin/agencies" Icon="business" />
+            <RadzenPanelMenuItem Text="Scope Assignment" Path="/admin/scopes" Icon="checklist" />
+            <RadzenPanelMenuItem Text="Devices" Path="/admin/devices" Icon="devices" />
+            <RadzenPanelMenuItem Text="Settings" Path="/admin/settings" Icon="settings" />
+            <RadzenPanelMenuItem Text="Diagnostics" Path="/admin/diagnostics" Icon="monitor_heart" />
         </RadzenPanelMenu>
         <RadzenStack AlignItems="Radzen.AlignItems.Center" Gap="0" class="rz-py-4 rz-py-lg-6" Style="padding: var(--rz-panel-menu-item-padding);">
-            <RadzenText Text="Epic 3 reporting scaffold" TextStyle="Radzen.Blazor.TextStyle.Caption" TagName="Radzen.Blazor.TagName.P" TextAlign="Radzen.TextAlign.Center" />
+            <RadzenText Text="Epic 4 admin shell" TextStyle="Radzen.Blazor.TextStyle.Caption" TagName="Radzen.Blazor.TagName.P" TextAlign="Radzen.TextAlign.Center" />
         </RadzenStack>
     </RadzenSidebar>
 </RadzenLayout>

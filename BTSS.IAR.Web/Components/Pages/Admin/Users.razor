@@ -1,0 +1,69 @@
+@page "/admin/users"
+@inject HttpClient Http
+
+<PageTitle>Users</PageTitle>
+
+<RadzenStack Gap="1rem">
+    <RadzenButton Text="New User" Icon="add_circle" Click="NewUser" />
+    <RadzenDataGrid Data="users" TItem="UserAdminDto" RowSelect="EditUser" AllowPaging="true" PageSize="20">
+        <Columns>
+            <RadzenDataGridColumn TItem="UserAdminDto" Property="UserName" Title="User" />
+            <RadzenDataGridColumn TItem="UserAdminDto" Property="DisplayName" Title="Display" />
+            <RadzenDataGridColumn TItem="UserAdminDto" Property="Email" Title="Email" />
+            <RadzenDataGridColumn TItem="UserAdminDto" Property="IsEnabled" Title="Active" />
+            <RadzenDataGridColumn TItem="UserAdminDto" Property="IsSuperUser" Title="Super" />
+        </Columns>
+    </RadzenDataGrid>
+    @if (editing is not null)
+    {
+        <RadzenCard>
+            <RadzenStack Gap="0.5rem">
+                <RadzenText TextStyle="TextStyle.H6">@(editing.Id == 0 ? "Create user" : "Edit user")</RadzenText>
+                <RadzenTextBox @bind-Value="editing.UserName" Placeholder="User name" Style="width:100%" />
+                <RadzenTextBox @bind-Value="editing.DisplayName" Placeholder="Display name" Style="width:100%" />
+                <RadzenTextBox @bind-Value="editing.Email" Placeholder="Email" Style="width:100%" />
+                <RadzenPassword @bind-Value="editing.Password" Placeholder="Password (leave blank to keep)" Style="width:100%" />
+                <RadzenCheckBox @bind-Value="editing.IsEnabled" /> <RadzenText>Enabled</RadzenText>
+                <RadzenCheckBox @bind-Value="editing.IsSuperUser" /> <RadzenText>Super user</RadzenText>
+                <RadzenDropDown Multiple="true" Chips="true" Data="agencies" TextProperty="Name" ValueProperty="Id" @bind-Value="editingAgencyIds" Placeholder="Agencies" Style="width:100%" />
+                <RadzenDropDown Multiple="true" Chips="true" Data="roles" TextProperty="Name" ValueProperty="Id" @bind-Value="editingRoleIds" Placeholder="Roles" Style="width:100%" />
+                <RadzenButton Text="Save" ButtonStyle="ButtonStyle.Primary" Click="SaveAsync" />
+            </RadzenStack>
+        </RadzenCard>
+    }
+</RadzenStack>
+
+@code {
+    private List<UserAdminDto> users = new();
+    private List<AgencyAdminDto> agencies = new();
+    private List<RoleAdminDto> roles = new();
+    private EditableUser? editing;
+    private IEnumerable<int> editingAgencyIds = Array.Empty<int>();
+    private IEnumerable<int> editingRoleIds = Array.Empty<int>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+        agencies = await Http.GetFromJsonAsync<List<AgencyAdminDto>>("/admin/agencies") ?? new();
+        roles = await Http.GetFromJsonAsync<List<RoleAdminDto>>("/admin/roles") ?? new();
+    }
+
+    private async Task ReloadAsync() => users = await Http.GetFromJsonAsync<List<UserAdminDto>>("/admin/users") ?? new();
+    private void NewUser() { editing = new(); editingAgencyIds = Array.Empty<int>(); editingRoleIds = Array.Empty<int>(); }
+    private void EditUser(UserAdminDto user)
+    {
+        editing = new EditableUser { Id = user.Id, UserName = user.UserName, DisplayName = user.DisplayName, Email = user.Email, IsEnabled = user.IsEnabled, IsSuperUser = user.IsSuperUser, ActiveAgencyId = user.ActiveAgencyId };
+        editingAgencyIds = user.Agencies.Where(x => x.IsEnabled).Select(x => x.AgencyId).ToArray();
+        editingRoleIds = user.Roles.Select(x => x.RoleId).ToArray();
+    }
+    private async Task SaveAsync()
+    {
+        if (editing is null) return;
+        var req = new UserUpsertRequest(editing.UserName ?? "", editing.Email ?? "", editing.DisplayName ?? "", editing.Password, editing.IsEnabled, editing.IsSuperUser, editing.ActiveAgencyId,
+            editingAgencyIds.Select((id, idx) => new UserAgencyAssignmentDto(id, idx == 0, true)).ToArray(),
+            editingRoleIds.Select(id => new UserRoleAssignmentDto(id, null)).ToArray());
+        HttpResponseMessage response = editing.Id == 0 ? await Http.PostAsJsonAsync("/admin/users", req) : await Http.PutAsJsonAsync($"/admin/users/{editing.Id}", req);
+        if (response.IsSuccessStatusCode) { editing = null; await ReloadAsync(); }
+    }
+    private sealed class EditableUser { public int Id { get; set; } public string? UserName { get; set; } public string? DisplayName { get; set; } public string? Email { get; set; } public string? Password { get; set; } public bool IsEnabled { get; set; } = true; public bool IsSuperUser { get; set; } public int? ActiveAgencyId { get; set; } }
+}

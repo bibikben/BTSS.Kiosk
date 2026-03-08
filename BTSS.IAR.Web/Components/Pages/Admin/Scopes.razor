@@ -1,0 +1,14 @@
+@page "/admin/scopes"
+@inject HttpClient Http
+
+<PageTitle>Scope Assignment</PageTitle>
+
+<RadzenDataGrid Data="scopes" TItem="ScopeLookupDto">
+    <Columns>
+        <RadzenDataGridColumn TItem="ScopeLookupDto" Property="Category" Title="Category" />
+        <RadzenDataGridColumn TItem="ScopeLookupDto" Property="Code" Title="Scope" />
+        <RadzenDataGridColumn TItem="ScopeLookupDto" Property="Description" Title="Description" />
+    </Columns>
+</RadzenDataGrid>
+
+@code { private List<ScopeLookupDto> scopes = new(); protected override async Task OnInitializedAsync() => scopes = await Http.GetFromJsonAsync<List<ScopeLookupDto>>("/api/lookups/scopes") ?? new(); }

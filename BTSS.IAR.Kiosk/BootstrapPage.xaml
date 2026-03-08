@@ -3,13 +3,26 @@
     x:Class="BTSS.IAR.Kiosk.BootstrapPage"
     xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
     xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
-    Title="Device Bootstrap"
+    Title="BTSS Kiosk"
     Padding="16">
 
     <ScrollView>
         <VerticalStackLayout Spacing="14">
-            <Label Text="BTSS Kiosk Display" FontSize="28" FontAttributes="Bold" />
-            <Label Text="Display-only shell with API-driven registration and configuration." FontSize="13" Opacity="0.8" />
+            <Label Text="BTSS Kiosk" FontSize="28" FontAttributes="Bold" />
+            <Label Text="Display runtime with locked admin tools and agency-aware operator context." FontSize="13" Opacity="0.8" />
+
+            <Border StrokeThickness="1" Padding="12">
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="Startup / Mode Select" FontAttributes="Bold" FontSize="18" />
+                    <Label Text="Standard runtime users can launch the assigned display. Admin mode unlocks device registration, diagnostics, and API settings." FontSize="13" Opacity="0.8" />
+                    <HorizontalStackLayout Spacing="10">
+                        <Button Text="Run Assigned Display" Clicked="OnRunDisplayClicked" />
+                        <Button Text="Admin Mode" Clicked="OnEnterAdminModeClicked" />
+                        <Button x:Name="ExitAdminModeButton" Text="Exit Admin Mode" Clicked="OnExitAdminModeClicked" IsVisible="False" />
+                    </HorizontalStackLayout>
+                    <Label x:Name="ModeLabel" Text="Mode: Standard runtime" FontAttributes="Bold" />
+                </VerticalStackLayout>
+            </Border>
 
             <Border StrokeThickness="1" Padding="12">
                 <VerticalStackLayout Spacing="8">
@@ -22,18 +35,34 @@
                 </VerticalStackLayout>
             </Border>
 
-            <Border StrokeThickness="1" Padding="12">
+            <Border x:Name="AdminLoginSection" StrokeThickness="1" Padding="12" IsVisible="False">
+                <VerticalStackLayout Spacing="10">
+                    <Label Text="Admin Login" FontAttributes="Bold" FontSize="18" />
+                    <Entry x:Name="AdminUserNameEntry" Placeholder="Username" />
+                    <Entry x:Name="AdminPasswordEntry" Placeholder="Password" IsPassword="True" />
+                    <Picker x:Name="AgencyPicker" Title="Active agency (optional)" />
+                    <HorizontalStackLayout Spacing="10">
+                        <Button Text="Login" Clicked="OnAdminLoginClicked" />
+                        <Button Text="Apply Agency" Clicked="OnApplyAgencyClicked" />
+                        <Button Text="Logout" Clicked="OnAdminLogoutClicked" />
+                    </HorizontalStackLayout>
+                    <Label x:Name="AdminSummaryLabel" Text="No admin session" />
+                </VerticalStackLayout>
+            </Border>
+
+            <Border x:Name="ApiPairingSection" StrokeThickness="1" Padding="12" IsVisible="False">
                 <VerticalStackLayout Spacing="10">
                     <Label Text="API Pairing" FontAttributes="Bold" FontSize="18" />
+                    <Label Text="Technical API details are hidden outside admin mode." FontSize="13" Opacity="0.8" />
                     <Entry x:Name="ApiBaseUrlEntry" Placeholder="https://api.example.com" />
                     <Entry x:Name="ApiClientIdEntry" Placeholder="OAuth Client ID" />
                     <Entry x:Name="ApiClientSecretEntry" Placeholder="OAuth Client Secret" IsPassword="True" />
                 </VerticalStackLayout>
             </Border>
 
-            <Border StrokeThickness="1" Padding="12">
+            <Border x:Name="ProfileSection" StrokeThickness="1" Padding="12" IsVisible="False">
                 <VerticalStackLayout Spacing="10">
-                    <Label Text="Device Registration Profile" FontAttributes="Bold" FontSize="18" />
+                    <Label Text="Local Settings" FontAttributes="Bold" FontSize="18" />
                     <Entry x:Name="DisplayNameEntry" Placeholder="Display name" />
                     <Entry x:Name="LocationEntry" Placeholder="Location" />
                     <Entry x:Name="StationCodeEntry" Placeholder="Station code" />
@@ -50,12 +79,10 @@
                 </VerticalStackLayout>
             </Border>
 
-            <Border StrokeThickness="1" Padding="12">
+            <Border x:Name="DiagnosticsSection" StrokeThickness="1" Padding="12" IsVisible="False">
                 <VerticalStackLayout Spacing="8">
-                    <Label Text="Boundary Notes" FontAttributes="Bold" FontSize="18" />
-                    <Label Text="• Kiosk keeps only bootstrap, session handling, and display rendering." />
-                    <Label Text="• Device identity is derived locally and paired through the API." />
-                    <Label Text="• First-run setup no longer depends on local manual config files." />
+                    <Label Text="Diagnostics" FontAttributes="Bold" FontSize="18" />
+                    <Label x:Name="DiagnosticsLabel" LineBreakMode="WordWrap" />
                 </VerticalStackLayout>
             </Border>
         </VerticalStackLayout>
