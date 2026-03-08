@@ -273,7 +273,8 @@ namespace BTSS.IAR.Record.Models
         [property: JsonPropertyName("station")] string? Station,
 
         [property: JsonProperty("quarters")]
-        [property: JsonPropertyName("quarters")] string? Quarters,
+        [property: JsonPropertyName("quarters")]
+    [property: System.Text.Json.Serialization.JsonConverter(typeof(FlexibleDateTimeConverter))] DateTime? Quarters,
 
         [property: JsonProperty("dispatched")]
         [property: JsonPropertyName("dispatched")]
@@ -288,16 +289,20 @@ namespace BTSS.IAR.Record.Models
         [property: System.Text.Json.Serialization.JsonConverter(typeof(FlexibleDateTimeConverter))] DateTime? Arrived,
 
         [property: JsonProperty("cleared")]
-        [property: JsonPropertyName("cleared")] JsonElement? Cleared,
+        [property: JsonPropertyName("cleared")]
+    [property: System.Text.Json.Serialization.JsonConverter(typeof(FlexibleDateTimeConverter))] DateTime? Cleared,
 
         [property: JsonProperty("created")]
-        [property: JsonPropertyName("created")] JsonElement? Created,
+        [property: JsonPropertyName("created")]
+    [property: System.Text.Json.Serialization.JsonConverter(typeof(FlexibleDateTimeConverter))] DateTime? Created,
 
         [property: JsonProperty("transportBegin")]
-        [property: JsonPropertyName("transportBegin")] JsonElement? TransportBegin,
+        [property: JsonPropertyName("transportBegin")]
+    [property: System.Text.Json.Serialization.JsonConverter(typeof(FlexibleDateTimeConverter))] DateTime? TransportBegin,
 
         [property: JsonProperty("transportComplete")]
-        [property: JsonPropertyName("transportComplete")] JsonElement? TransportComplete,
+        [property: JsonPropertyName("transportComplete")]
+    [property: System.Text.Json.Serialization.JsonConverter(typeof(FlexibleDateTimeConverter))] DateTime? TransportComplete,
 
         [property: JsonProperty("unitNotes")]
         [property: JsonPropertyName("unitNotes")] JsonElement? UnitNotes,

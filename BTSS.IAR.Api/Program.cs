@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using BTSS.IAR.Api.Auth;
 using BTSS.IAR.Api.Data;
 using BTSS.IAR.Api.Models;
@@ -160,6 +161,7 @@ using (var scope = app.Services.CreateScope())
     await EnsureEpic5SchemaAsync(db);
     await EnsureEpic10SchemaAsync(db);
     await EnsureEpic13SchemaAsync(db);
+    await EnsureEpic2SchemaAsync(db);
     await EnsureIngestSchemaAsync(db);
     await scope.ServiceProvider.GetRequiredService<HumanAuthService>().SeedDefaultsAsync();
 }
@@ -339,6 +341,7 @@ api.MapPost("/ingest", async (HttpContext http, AppDbContext db, EmergencyCallUn
     existing.UpdatedAtUtc = updatedAtUtc;
     existing.ReceivedAtUtc = receivedAtUtc;
     client.UpdatedAtUtc = receivedAtUtc;
+    await UpsertCentralIncidentAsync(db, client, normalized, receivedAtUtc);
 
     await db.SaveChangesAsync();
 
@@ -360,6 +363,248 @@ api.MapPost("/ingest", async (HttpContext http, AppDbContext db, EmergencyCallUn
 .WithName("IngestIncident")
 .WithSummary("Receive transmitted call data")
 .WithDescription("Receives a unified emergency call payload and stores the latest canonical snapshot for the authenticated API client.");
+
+
+api.MapPost("/ingest/bulk", async (HttpContext http, AppDbContext db, List<EmergencyCallUnified> incidents) =>
+{
+    if (incidents is null || incidents.Count == 0)
+        return Results.BadRequest(new { message = "At least one incident payload is required." });
+
+    var apiClientIdValue = http.User.FindFirst("api_client_id")?.Value;
+    if (!int.TryParse(apiClientIdValue, out var apiClientId) || apiClientId <= 0)
+        return Results.Unauthorized();
+
+    var client = await db.ApiClients.Include(x => x.SourceSystem).FirstOrDefaultAsync(x => x.Id == apiClientId);
+    if (client is null || !client.IsEnabled)
+        return Results.Unauthorized();
+
+    var receivedAtUtc = DateTime.UtcNow;
+    var accepted = new List<object>();
+    foreach (var incident in incidents.Where(x => x is not null))
+    {
+        var incidentId = incident.GetCallIdentifier()?.Trim();
+        if (string.IsNullOrWhiteSpace(incidentId))
+            continue;
+
+        var normalized = NormalizeIncidentForIngest(incident, client);
+        var canonicalJson = EmergencyCallUnifiedJson.Serialize(normalized);
+        var updatedAtUtc = normalized.GetUpdatedAtUtc() ?? normalized.GetCreatedAtUtc() ?? receivedAtUtc;
+        var isClosed = normalized.GetIsClosed();
+
+        var existing = await db.IngestedIncidents.FirstOrDefaultAsync(x => x.ApiClientId == client.Id && x.IncidentId == incidentId);
+        if (existing is null)
+        {
+            existing = new IngestedIncident
+            {
+                ApiClientId = client.Id,
+                AgencyId = client.AgencyId,
+                IncidentId = incidentId
+            };
+            db.IngestedIncidents.Add(existing);
+        }
+
+        existing.CanonicalJson = canonicalJson;
+        existing.Status = normalized.Details?.Status;
+        existing.IsClosed = isClosed;
+        existing.Agency = normalized.GetAgencyName();
+        existing.Address = normalized.GetAddress();
+        existing.CallType = normalized.GetCallType();
+        existing.UpdatedAtUtc = updatedAtUtc;
+        existing.ReceivedAtUtc = receivedAtUtc;
+        await UpsertCentralIncidentAsync(db, client, normalized, receivedAtUtc);
+
+        accepted.Add(new { incidentId, isClosed, updatedAtUtc });
+    }
+
+    client.UpdatedAtUtc = receivedAtUtc;
+    await db.SaveChangesAsync();
+    return Results.Ok(new { count = accepted.Count, items = accepted, receivedAtUtc });
+})
+.RequireAuthorization("scope:ingest")
+.RequireRateLimiting("iar-ingest")
+.Accepts<List<EmergencyCallUnified>>("application/json")
+.WithSummary("Receive transmitted call data in bulk")
+.WithDescription("Receives multiple unified emergency call payloads and upserts both the compatibility snapshot table and the Epic 2 central incident schema.");
+
+api.MapGet("/incidents", async (HttpContext http, AppDbContext db, int? agencyId, int? take, string? status, bool? closed) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (effectiveAgencyId is null)
+        return Results.Forbid();
+
+    var limit = Math.Clamp(take ?? 250, 1, 1000);
+    var query = db.Incidents.AsNoTracking()
+        .Where(x => db.IncidentAgencies.Any(ia => ia.IncidentId == x.Id && ia.AgencyId == effectiveAgencyId.Value));
+
+    if (!string.IsNullOrWhiteSpace(status))
+        query = query.Where(x => x.Status == status);
+    if (closed.HasValue)
+        query = closed.Value ? query.Where(x => x.ClosedAtUtc != null) : query.Where(x => x.ClosedAtUtc == null);
+
+    var items = await query
+        .OrderByDescending(x => x.UpdatedAtUtc)
+        .Take(limit)
+        .Select(x => new IncidentListItemDto(
+            x.Id,
+            x.ExternalIncidentId,
+            x.Type,
+            x.Priority,
+            x.Address,
+            x.LocationName,
+            x.Status,
+            x.DispatchedAtUtc,
+            x.ClosedAtUtc,
+            x.UpdatedAtUtc,
+            db.IncidentAgencies.Count(ia => ia.IncidentId == x.Id)))
+        .ToListAsync();
+
+    return Results.Ok(new { items, agencyId = effectiveAgencyId, count = items.Count });
+}).RequireAuthorization();
+
+api.MapGet("/incidents/{id:long}", async (HttpContext http, AppDbContext db, long id, int? agencyId) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (effectiveAgencyId is null)
+        return Results.Forbid();
+
+    var incident = await db.Incidents.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id);
+    if (incident is null)
+        return Results.NotFound();
+    var allowed = await db.IncidentAgencies.AnyAsync(x => x.IncidentId == id && x.AgencyId == effectiveAgencyId.Value);
+    if (!allowed)
+        return Results.Forbid();
+
+    var agencies = await db.IncidentAgencies.AsNoTracking()
+        .Where(x => x.IncidentId == id)
+        .Join(db.Agencies, ia => ia.AgencyId, a => a.Id, (ia, a) => new IncidentAgencySummaryDto(ia.AgencyId, a.Code, a.Name, ia.AgencyEventId, ia.DispatchGroup, ia.CaseNumber, ia.IsPrimary))
+        .OrderByDescending(x => x.IsPrimary).ThenBy(x => x.AgencyName)
+        .ToArrayAsync();
+
+    var callers = await db.IncidentCallers.AsNoTracking()
+        .Where(x => x.IncidentId == id)
+        .OrderBy(x => x.CreatedAtUtc)
+        .Select(x => new IncidentCallerDto(x.Name, x.PhoneNumber, x.Address, x.City, x.FirstCall, x.CreatedAtUtc))
+        .ToArrayAsync();
+
+    return Results.Ok(new IncidentDetailDto(incident.Id, incident.ExternalIncidentId, incident.SourceSystemId, incident.AgencyPrimaryId, incident.Type, incident.Priority, incident.Address, incident.LocationName, incident.Latitude, incident.Longitude, incident.Coordinates, incident.Status, incident.DispatchedAtUtc, incident.ClosedAtUtc, incident.SourceCreatedAtUtc, incident.SourceUpdatedAtUtc, incident.CreatedAtUtc, incident.UpdatedAtUtc, agencies, callers));
+}).RequireAuthorization();
+
+api.MapGet("/incidents/{id:long}/comments", async (HttpContext http, AppDbContext db, long id, int? agencyId) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (!await CanAccessIncidentAsync(db, id, effectiveAgencyId))
+        return Results.Forbid();
+
+    var items = await db.IncidentComments.AsNoTracking().Where(x => x.IncidentId == id)
+        .OrderBy(x => x.OccurredAtUtc).ThenBy(x => x.Id)
+        .Select(x => new IncidentCommentDto(x.Id, x.Message, x.OccurredAtUtc, x.CreatedBy, x.CreatedAgency))
+        .ToListAsync();
+    return Results.Ok(items);
+}).RequireAuthorization();
+
+api.MapGet("/incidents/{id:long}/units", async (HttpContext http, AppDbContext db, long id, int? agencyId) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (!await CanAccessIncidentAsync(db, id, effectiveAgencyId))
+        return Results.Forbid();
+
+    var items = await db.IncidentUnits.AsNoTracking().Where(x => x.IncidentId == id && (x.AgencyId == null || x.AgencyId == effectiveAgencyId))
+        .OrderBy(x => x.UnitIdentifier)
+        .Select(x => new IncidentUnitDto(x.Id, x.AgencyId, x.UnitIdentifier, x.Station, x.UnitType, x.CurrentStatus, x.CreatedAtUtc, x.UpdatedAtUtc))
+        .ToListAsync();
+    return Results.Ok(items);
+}).RequireAuthorization();
+
+api.MapGet("/incidents/{id:long}/timeline", async (HttpContext http, AppDbContext db, long id, int? agencyId) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (!await CanAccessIncidentAsync(db, id, effectiveAgencyId))
+        return Results.Forbid();
+
+    var items = await db.UnitTimelineFacts.AsNoTracking().Where(x => x.IncidentId == id && (x.AgencyId == null || x.AgencyId == effectiveAgencyId))
+        .OrderBy(x => x.UnitIdentifier)
+        .Select(x => new UnitTimelineFactDto(x.Id, x.AgencyId, x.UnitIdentifier, x.DispatchedAtUtc, x.EnrouteAtUtc, x.ArrivedAtUtc, x.TransportBeginAtUtc, x.TransportCompleteAtUtc, x.ClearedAtUtc, x.InQuartersAtUtc))
+        .ToListAsync();
+    return Results.Ok(items);
+}).RequireAuthorization();
+
+api.MapGet("/incidents/{id:long}/agencies", async (HttpContext http, AppDbContext db, long id, int? agencyId) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (!await CanAccessIncidentAsync(db, id, effectiveAgencyId))
+        return Results.Forbid();
+
+    var items = await db.IncidentAgencies.AsNoTracking()
+        .Where(x => x.IncidentId == id)
+        .Join(db.Agencies, ia => ia.AgencyId, a => a.Id, (ia, a) => new IncidentAgencySummaryDto(ia.AgencyId, a.Code, a.Name, ia.AgencyEventId, ia.DispatchGroup, ia.CaseNumber, ia.IsPrimary))
+        .OrderByDescending(x => x.IsPrimary).ThenBy(x => x.AgencyName)
+        .ToListAsync();
+    return Results.Ok(items);
+}).RequireAuthorization();
+
+api.MapPost("/incidents/{id:long}/rebuild-timeline", async (HttpContext http, AppDbContext db, long id, int? agencyId) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (!await CanAccessIncidentAsync(db, id, effectiveAgencyId))
+        return Results.Forbid();
+
+    await RebuildTimelineFactsAsync(db, id);
+    await db.SaveChangesAsync();
+    var count = await db.UnitTimelineFacts.CountAsync(x => x.IncidentId == id);
+    return Results.Ok(new { incidentId = id, rebuilt = count });
+}).RequireAuthorization();
+
+api.MapGet("/sync/incidents", async (HttpContext http, AppDbContext db, int? agencyId, DateTime? sinceUtc, int? take) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (effectiveAgencyId is null)
+        return Results.Forbid();
+
+    var limit = Math.Clamp(take ?? 250, 1, 1000);
+    var query = db.IncidentSyncLog.AsNoTracking().Where(x => x.AgencyId == effectiveAgencyId.Value);
+    if (sinceUtc.HasValue)
+        query = query.Where(x => x.ChangedAtUtc >= sinceUtc.Value);
+
+    var items = await query.OrderBy(x => x.ChangedAtUtc).Take(limit).ToListAsync();
+    return Results.Ok(items);
+}).RequireAuthorization();
+
+api.MapGet("/sync/changes", async (HttpContext http, AppDbContext db, int? agencyId, DateTime? sinceUtc, int? take) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (effectiveAgencyId is null)
+        return Results.Forbid();
+
+    var limit = Math.Clamp(take ?? 250, 1, 1000);
+    var changes = await db.IncidentSyncLog.AsNoTracking()
+        .Where(x => x.AgencyId == effectiveAgencyId.Value && (!sinceUtc.HasValue || x.ChangedAtUtc >= sinceUtc.Value))
+        .OrderBy(x => x.ChangedAtUtc)
+        .Take(limit)
+        .ToListAsync();
+
+    var incidentIds = changes.Select(x => x.IncidentId).Distinct().ToArray();
+    var incidents = await db.Incidents.AsNoTracking().Where(x => incidentIds.Contains(x.Id)).ToListAsync();
+    return Results.Ok(new { changes, incidents });
+}).RequireAuthorization();
+
+api.MapPost("/sync/ack", async (HttpContext http, AppDbContext db, int? agencyId, SyncAckRequest req) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (effectiveAgencyId is null)
+        return Results.Forbid();
+    if (req.SyncLogIds is null || req.SyncLogIds.Length == 0)
+        return Results.BadRequest(new { message = "SyncLogIds is required." });
+
+    var rows = await db.IncidentSyncLog.Where(x => req.SyncLogIds.Contains(x.Id) && x.AgencyId == effectiveAgencyId.Value).ToListAsync();
+    foreach (var row in rows)
+    {
+        row.AckedAtUtc = DateTime.UtcNow;
+        row.DeviceId = req.DeviceId ?? row.DeviceId;
+        row.Notes = req.Notes ?? row.Notes;
+    }
+    await db.SaveChangesAsync();
+    return Results.Ok(new { acked = rows.Count, agencyId = effectiveAgencyId });
+}).RequireAuthorization();
 
 api.MapGet("/service/incidents", async (AppDbContext db, ClaimsPrincipal user, int? take) =>
 {
@@ -1692,6 +1937,537 @@ static string? BuildCoordinates(EmergencyCallUnified incident)
         : null;
 }
 
+static DateTime? ResolveUtc(string? value)
+{
+    if(!DateTime.TryParse(value, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out var parsed))
+
+        return null;
+    return DateTime.SpecifyKind(parsed, DateTimeKind.Utc);
+}
+
+//static DateTime? ResolveUtc(DateTime? value)
+//{
+//    if (!value.HasValue)
+//        return null;
+//    return DateTime.SpecifyKind(value.Value, DateTimeKind.Utc);
+//}
+
+
+static int? ResolveEffectiveAgencyId(ClaimsPrincipal user, int? requestedAgencyId = null)
+{
+    if (requestedAgencyId.HasValue)
+        return requestedAgencyId;
+
+    var activeAgencyClaim = user.FindFirst("active_agency_id")?.Value;
+    if (int.TryParse(activeAgencyClaim, out var activeAgencyId) && activeAgencyId > 0)
+        return activeAgencyId;
+
+    return null;
+}
+
+static async Task<bool> CanAccessIncidentAsync(AppDbContext db, long incidentId, int? agencyId)
+{
+    if (agencyId is null)
+        return false;
+
+    return await db.IncidentAgencies.AnyAsync(x => x.IncidentId == incidentId && x.AgencyId == agencyId.Value);
+}
+
+static async Task UpsertCentralIncidentAsync(AppDbContext db, ApiClient client, EmergencyCallUnified incident, DateTime changedAtUtc)
+{
+    var externalIncidentId = incident.GetCallIdentifier()?.Trim();
+    if (string.IsNullOrWhiteSpace(externalIncidentId))
+        return;
+
+    var incidentEntity = await db.Incidents.FirstOrDefaultAsync(x => x.ExternalIncidentId == externalIncidentId);
+    var isNew = incidentEntity is null;
+    if (incidentEntity is null)
+    {
+        incidentEntity = new IncidentEntity
+        {
+            ExternalIncidentId = externalIncidentId,
+            CreatedAtUtc = changedAtUtc
+        };
+        db.Incidents.Add(incidentEntity);
+    }
+
+    incidentEntity.SourceSystemId = client.SourceSystemId;
+    incidentEntity.AgencyPrimaryId = client.AgencyId;
+    incidentEntity.Type = incident.GetCallType();
+    incidentEntity.Priority = incident.GetPriority();
+    incidentEntity.Address = incident.GetAddress();
+    incidentEntity.LocationName = incident.GetLocationName();
+    incidentEntity.Latitude = incident.GetLatitude();
+    incidentEntity.Longitude = incident.GetLongitude();
+    incidentEntity.Coordinates = BuildCoordinates(incident);
+    incidentEntity.Status = incident.Details?.Status;
+    incidentEntity.DispatchedAtUtc = ResolveUtc(incident.Details?.DispatchedAt?.ToString());
+    incidentEntity.ClosedAtUtc = incident.GetIsClosed() ? (incident.GetUpdatedAtUtc() ?? changedAtUtc) : null;
+    incidentEntity.RawPayloadJson = EmergencyCallUnifiedJson.Serialize(incident);
+    incidentEntity.SourceCreatedAtUtc = incident.GetCreatedAtUtc();
+    incidentEntity.SourceUpdatedAtUtc = incident.GetUpdatedAtUtc() ?? changedAtUtc;
+    incidentEntity.UpdatedAtUtc = changedAtUtc;
+
+    await db.SaveChangesAsync();
+
+    await UpsertIncidentAgenciesAsync(db, incidentEntity, incident, client, changedAtUtc);
+    await UpsertIncidentCallersAsync(db, incidentEntity, incident);
+    await UpsertIncidentCommentsAsync(db, incidentEntity, incident);
+    await UpsertIncidentUnitsAsync(db, incidentEntity, incident);
+    await RebuildTimelineFactsAsync(db, incidentEntity.Id);
+    await AddSyncLogEntriesAsync(db, incidentEntity.Id, changedAtUtc, isNew ? "insert" : "upsert");
+}
+
+static async Task UpsertIncidentAgenciesAsync(AppDbContext db, IncidentEntity incidentEntity, EmergencyCallUnified incident, ApiClient client, DateTime changedAtUtc)
+{
+    var mappings = new List<(int agencyId, string? agencyEventId, string? dispatchGroup, string? caseNumber, bool isPrimary)>();
+
+    foreach (var agency in incident.Agencies ?? Enumerable.Empty<BTSS.IAR.Record.Models.Agency>())
+    {
+        var code = (agency.Name ?? agency.DispatchGroup)?.Trim();
+        var agencyEntity = await ResolveAgencyAsync(db, code, agency.Name);
+        mappings.Add((agencyEntity.Id, agency.Id, agency.DispatchGroup, agency.CaseNumbers?.FirstOrDefault(), mappings.Count == 0));
+    }
+
+    var commentMappings = ExtractAgencyCaseMappings(incident).ToList();
+    foreach (var mapping in commentMappings)
+    {
+        var agencyEntity = await ResolveAgencyAsync(db, mapping.AgencyCode, mapping.AgencyCode);
+        if (!mappings.Any(x => x.agencyId == agencyEntity.Id && string.Equals(x.caseNumber, mapping.CaseNumber, StringComparison.OrdinalIgnoreCase)))
+            mappings.Add((agencyEntity.Id, mapping.AgencyEventId, mapping.DispatchGroup, mapping.CaseNumber, mappings.Count == 0));
+    }
+
+    if (mappings.Count == 0)
+        mappings.Add((client.AgencyId, incident.Num1 ?? incident.Details?.Id, incident.Agencies?.FirstOrDefault()?.DispatchGroup, incident.CNum, true));
+
+    var existing = await db.IncidentAgencies.Where(x => x.IncidentId == incidentEntity.Id).ToListAsync();
+    foreach (var mapping in mappings)
+    {
+        var row = existing.FirstOrDefault(x => x.AgencyId == mapping.agencyId && string.Equals(x.AgencyEventId ?? string.Empty, mapping.agencyEventId ?? string.Empty, StringComparison.OrdinalIgnoreCase));
+        if (row is null)
+        {
+            row = new IncidentAgencyEntity
+            {
+                IncidentId = incidentEntity.Id,
+                AgencyId = mapping.agencyId,
+                CreatedAtUtc = changedAtUtc
+            };
+            db.IncidentAgencies.Add(row);
+            existing.Add(row);
+        }
+
+        row.AgencyEventId = mapping.agencyEventId;
+        row.DispatchGroup = mapping.dispatchGroup;
+        row.CaseNumber = mapping.caseNumber;
+        row.IsPrimary = mapping.isPrimary;
+        row.UpdatedAtUtc = changedAtUtc;
+    }
+
+    incidentEntity.AgencyPrimaryId = mappings.FirstOrDefault(x => x.isPrimary).agencyId;
+}
+
+static async Task UpsertIncidentCallersAsync(AppDbContext db, IncidentEntity incidentEntity, EmergencyCallUnified incident)
+{
+    var existing = await db.IncidentCallers.Where(x => x.IncidentId == incidentEntity.Id).ToListAsync();
+    db.IncidentCallers.RemoveRange(existing);
+    foreach (var caller in incident.Callers ?? Enumerable.Empty<Caller>())
+    {
+        db.IncidentCallers.Add(new IncidentCallerEntity
+        {
+            IncidentId = incidentEntity.Id,
+            Name = caller.Name,
+            PhoneNumber = caller.PhoneNumber,
+            Address = JsonText(caller.Address),
+            City = JsonText(caller.City),
+            FirstCall = caller.FirstCall,
+            CreatedAtUtc = ResolveUtc(caller.CreatedAt?.ToString()),
+            UpdatedAtUtc = ResolveNullableJsonDate(caller.UpdatedAt)
+        });
+    }
+}
+
+static async Task UpsertIncidentCommentsAsync(AppDbContext db, IncidentEntity incidentEntity, EmergencyCallUnified incident)
+{
+    var existing = await db.IncidentComments.Where(x => x.IncidentId == incidentEntity.Id).ToListAsync();
+    db.IncidentComments.RemoveRange(existing);
+    foreach (var comment in incident.Comments ?? Enumerable.Empty<Comment>())
+    {
+        db.IncidentComments.Add(new IncidentCommentEntity
+        {
+            IncidentId = incidentEntity.Id,
+            Message = comment.Message ?? string.Empty,
+            OccurredAtUtc = ResolveUtc(comment.CreatedAt?.ToString()),
+            CreatedBy = comment.CreatedBy,
+            CreatedAgency = comment.CreatedAgency
+        });
+    }
+}
+
+static async Task UpsertIncidentUnitsAsync(AppDbContext db, IncidentEntity incidentEntity, EmergencyCallUnified incident)
+{
+    var agencies = await db.IncidentAgencies.Where(x => x.IncidentId == incidentEntity.Id).ToListAsync();
+    var defaultAgencyId = agencies.FirstOrDefault(x => x.IsPrimary)?.AgencyId ?? agencies.FirstOrDefault()?.AgencyId;
+
+    var existingUnits = await db.IncidentUnits.Where(x => x.IncidentId == incidentEntity.Id).ToListAsync();
+    db.IncidentUnits.RemoveRange(existingUnits);
+    var existingEvents = await db.UnitStatusEvents.Where(x => x.IncidentId == incidentEntity.Id).ToListAsync();
+    db.UnitStatusEvents.RemoveRange(existingEvents);
+
+    var grouped = (incident.Units ?? Enumerable.Empty<Unit>())
+        .GroupBy(x => new { AgencyId = defaultAgencyId, UnitIdentifier = (x.Id ?? string.Empty).Trim() });
+
+    foreach (var group in grouped)
+    {
+        if (string.IsNullOrWhiteSpace(group.Key.UnitIdentifier))
+            continue;
+
+        var latest = group.OrderByDescending(x => ResolveUtc(x.CreatedAt?.ToString()) ?? DateTime.MinValue).First();
+        db.IncidentUnits.Add(new IncidentUnitEntity
+        {
+            IncidentId = incidentEntity.Id,
+            AgencyId = group.Key.AgencyId,
+            UnitIdentifier = group.Key.UnitIdentifier,
+            Station = latest.Station,
+            UnitType = latest.Type,
+            CurrentStatus = latest.Status,
+            CreatedAtUtc = group.Min(x => ResolveUtc(x.CreatedAt?.ToString())),
+            UpdatedAtUtc = group.Max(x => ResolveUtc(x.CreatedAt?.ToString()))
+        });
+
+        foreach (var item in group.OrderBy(x => ResolveUtc(x.CreatedAt?.ToString()) ?? DateTime.MinValue))
+        {
+            db.UnitStatusEvents.Add(new UnitStatusEventEntity
+            {
+                IncidentId = incidentEntity.Id,
+                AgencyId = group.Key.AgencyId,
+                UnitIdentifier = group.Key.UnitIdentifier,
+                StatusCodeRaw = item.StatusOriginal ?? item.Status,
+                StatusCodeNormalized = IncidentStatusNormalizer.Normalize(item.StatusOriginal ?? item.Status),
+                OccurredAtUtc = ResolveUtc(item.CreatedAt?.ToString()),
+                SourceText = JsonText(item.UnitNotes),
+                CreatedBy = item.CreatedBy,
+                CreatedAgency = item.CreatedAgency
+            });
+
+            AddSyntheticTimelineEvent(db, incidentEntity.Id, group.Key.AgencyId, group.Key.UnitIdentifier, "DP", "Dispatched", item.Dispatched, item.CreatedBy, item.CreatedAgency);
+            AddSyntheticTimelineEvent(db, incidentEntity.Id, group.Key.AgencyId, group.Key.UnitIdentifier, "ER", "Enroute", item.Enroute, item.CreatedBy, item.CreatedAgency);
+            AddSyntheticTimelineEvent(db, incidentEntity.Id, group.Key.AgencyId, group.Key.UnitIdentifier, "OS", "Arrived", item.Arrived, item.CreatedBy, item.CreatedAgency);
+            AddSyntheticTimelineEvent(db, incidentEntity.Id, group.Key.AgencyId, group.Key.UnitIdentifier, "TR", "Transport Begin", item.TransportBegin, item.CreatedBy, item.CreatedAgency);
+            AddSyntheticTimelineEvent(db, incidentEntity.Id, group.Key.AgencyId, group.Key.UnitIdentifier, "TC", "Transport Complete",item.TransportComplete, item.CreatedBy, item.CreatedAgency);
+            AddSyntheticTimelineEvent(db, incidentEntity.Id, group.Key.AgencyId, group.Key.UnitIdentifier, "CL", "Cleared", item.Cleared, item.CreatedBy, item.CreatedAgency);
+            AddSyntheticTimelineEvent(db, incidentEntity.Id, group.Key.AgencyId, group.Key.UnitIdentifier, "AV", "In Quarters",item.Quarters, item.CreatedBy, item.CreatedAgency);
+        }
+    }
+}
+
+static void AddSyntheticTimelineEvent(AppDbContext db, long incidentId, int? agencyId, string unitIdentifier, string raw, string normalized, DateTime? occurredAtUtc, string? createdBy, string? createdAgency)
+{
+    if (!occurredAtUtc.HasValue)
+        return;
+
+    db.UnitStatusEvents.Add(new UnitStatusEventEntity
+    {
+        IncidentId = incidentId,
+        AgencyId = agencyId,
+        UnitIdentifier = unitIdentifier,
+        StatusCodeRaw = raw,
+        StatusCodeNormalized = normalized,
+        OccurredAtUtc = occurredAtUtc,
+        CreatedBy = createdBy,
+        CreatedAgency = createdAgency
+    });
+}
+
+static string? JsonText(System.Text.Json.JsonElement? value)
+{
+    if (!value.HasValue)
+        return null;
+    var el = value.Value;
+    return el.ValueKind switch
+    {
+        JsonValueKind.String => el.GetString(),
+        JsonValueKind.Number => el.GetRawText(),
+        JsonValueKind.True => "true",
+        JsonValueKind.False => "false",
+        JsonValueKind.Null or JsonValueKind.Undefined => null,
+        _ => el.GetRawText()
+    };
+}
+
+
+
+static DateTime? ResolveNullableJsonDate(System.Text.Json.JsonElement? value)
+{
+    if (!value.HasValue)
+        return null;
+    var el = value.Value;
+    if (el.ValueKind == JsonValueKind.String)
+        return ResolveUtc(el.GetString());
+    if (el.ValueKind == JsonValueKind.Number && el.TryGetInt64(out var n))
+    {
+        return n > 10_000_000_000L ? DateTimeOffset.FromUnixTimeMilliseconds(n).UtcDateTime : DateTimeOffset.FromUnixTimeSeconds(n).UtcDateTime;
+    }
+    return null;
+}
+
+static async Task RebuildTimelineFactsAsync(AppDbContext db, long incidentId)
+{
+    var existing = await db.UnitTimelineFacts.Where(x => x.IncidentId == incidentId).ToListAsync();
+    db.UnitTimelineFacts.RemoveRange(existing);
+
+    var events = await db.UnitStatusEvents
+        .Where(x => x.IncidentId == incidentId)
+        .OrderBy(x => x.UnitIdentifier)
+        .ThenBy(x => x.OccurredAtUtc)
+        .ToListAsync();
+
+    foreach (var group in events.GroupBy(x => new { x.AgencyId, x.UnitIdentifier }))
+    {
+        var fact = new UnitTimelineFactEntity
+        {
+            IncidentId = incidentId,
+            AgencyId = group.Key.AgencyId,
+            UnitIdentifier = group.Key.UnitIdentifier,
+            UpdatedAtUtc = DateTime.UtcNow
+        };
+
+        foreach (var evt in group)
+        {
+            var normalized = evt.StatusCodeNormalized ?? IncidentStatusNormalizer.Normalize(evt.StatusCodeRaw);
+            switch (normalized)
+            {
+                case "Dispatched": fact.DispatchedAtUtc ??= evt.OccurredAtUtc; break;
+                case "Enroute": fact.EnrouteAtUtc ??= evt.OccurredAtUtc; break;
+                case "Arrived": fact.ArrivedAtUtc ??= evt.OccurredAtUtc; break;
+                case "Transport Begin": fact.TransportBeginAtUtc ??= evt.OccurredAtUtc; break;
+                case "Transport Complete": fact.TransportCompleteAtUtc ??= evt.OccurredAtUtc; break;
+                case "Cleared": fact.ClearedAtUtc ??= evt.OccurredAtUtc; break;
+                case "In Quarters": fact.InQuartersAtUtc ??= evt.OccurredAtUtc; break;
+            }
+        }
+
+        db.UnitTimelineFacts.Add(fact);
+    }
+}
+
+static async Task AddSyncLogEntriesAsync(AppDbContext db, long incidentId, DateTime changedAtUtc, string changeType)
+{
+    var agencyIds = await db.IncidentAgencies.Where(x => x.IncidentId == incidentId).Select(x => x.AgencyId).Distinct().ToListAsync();
+    foreach (var agencyId in agencyIds)
+    {
+        db.IncidentSyncLog.Add(new IncidentSyncLogEntity
+        {
+            IncidentId = incidentId,
+            AgencyId = agencyId,
+            Scope = "incident",
+            ChangeType = changeType,
+            ChangedAtUtc = changedAtUtc
+        });
+    }
+}
+
+static async Task<BTSS.IAR.Api.Data.Agency> ResolveAgencyAsync(AppDbContext db, string? code, string? name)
+{
+    var normalizedCode = string.IsNullOrWhiteSpace(code) ? null : code.Trim().ToUpperInvariant();
+    if (!string.IsNullOrWhiteSpace(normalizedCode))
+    {
+        var existing = await db.Agencies.FirstOrDefaultAsync(x => x.Code == normalizedCode);
+        if (existing is not null)
+            return existing;
+
+        var created = new BTSS.IAR.Api.Data.Agency { Code = normalizedCode, Name = string.IsNullOrWhiteSpace(name) ? normalizedCode : name.Trim(), IsEnabled = true };
+        db.Agencies.Add(created);
+        await db.SaveChangesAsync();
+        return created;
+    }
+
+    return await db.Agencies.OrderBy(x => x.Id).FirstAsync();
+}
+
+static IEnumerable<(string AgencyCode, string? DispatchGroup, string? CaseNumber, string? AgencyEventId)> ExtractAgencyCaseMappings(EmergencyCallUnified incident)
+{
+    var regex = new Regex(@"Case number\s+(?<case>[A-Z0-9]+)\s+has been assigned for\s+(?<agency>[A-Z0-9]+):(?<group>[A-Z0-9]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    foreach (var comment in incident.Comments ?? Enumerable.Empty<Comment>())
+    {
+        var message = comment.Message ?? string.Empty;
+        var match = regex.Match(message);
+        if (!match.Success)
+            continue;
+
+        var caseNumber = match.Groups["case"].Value;
+        var agencyCode = match.Groups["agency"].Value;
+        var dispatchGroup = match.Groups["group"].Value;
+        yield return (agencyCode, dispatchGroup, caseNumber, incident.Num1 ?? incident.Details?.Id);
+    }
+}
+
+static async Task EnsureEpic2SchemaAsync(AppDbContext db)
+{
+    if (!db.Database.IsSqlServer())
+        return;
+
+    const string sql = @"
+IF OBJECT_ID(N'[dbo].[Incidents]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[Incidents]
+    (
+        [Id] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [ExternalIncidentId] NVARCHAR(128) NOT NULL,
+        [SourceSystemId] SMALLINT NULL,
+        [AgencyPrimaryId] INT NULL,
+        [Type] NVARCHAR(256) NULL,
+        [Priority] NVARCHAR(64) NULL,
+        [Address] NVARCHAR(512) NULL,
+        [LocationName] NVARCHAR(256) NULL,
+        [Latitude] FLOAT NULL,
+        [Longitude] FLOAT NULL,
+        [Coordinates] NVARCHAR(64) NULL,
+        [Status] NVARCHAR(64) NULL,
+        [DispatchedAtUtc] DATETIME2 NULL,
+        [ClosedAtUtc] DATETIME2 NULL,
+        [RawPayloadJson] NVARCHAR(MAX) NOT NULL,
+        [SourceCreatedAtUtc] DATETIME2 NULL,
+        [SourceUpdatedAtUtc] DATETIME2 NULL,
+        [CreatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_Incidents_CreatedAtUtc] DEFAULT SYSUTCDATETIME(),
+        [UpdatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_Incidents_UpdatedAtUtc] DEFAULT SYSUTCDATETIME()
+    );
+    CREATE UNIQUE INDEX [IX_Incidents_ExternalIncidentId] ON [dbo].[Incidents]([ExternalIncidentId]);
+END
+IF OBJECT_ID(N'[dbo].[IncidentAgencies]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[IncidentAgencies]
+    (
+        [Id] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [IncidentId] BIGINT NOT NULL,
+        [AgencyId] INT NOT NULL,
+        [AgencyEventId] NVARCHAR(128) NULL,
+        [DispatchGroup] NVARCHAR(64) NULL,
+        [CaseNumber] NVARCHAR(128) NULL,
+        [IsPrimary] BIT NOT NULL CONSTRAINT [DF_IncidentAgencies_IsPrimary] DEFAULT 0,
+        [CreatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_IncidentAgencies_CreatedAtUtc] DEFAULT SYSUTCDATETIME(),
+        [UpdatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_IncidentAgencies_UpdatedAtUtc] DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT [FK_IncidentAgencies_Incidents] FOREIGN KEY ([IncidentId]) REFERENCES [dbo].[Incidents]([Id]) ON DELETE CASCADE
+    );
+    CREATE INDEX [IX_IncidentAgencies_IncidentId_AgencyId] ON [dbo].[IncidentAgencies]([IncidentId],[AgencyId]);
+END
+IF OBJECT_ID(N'[dbo].[IncidentCallers]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[IncidentCallers]
+    (
+        [Id] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [IncidentId] BIGINT NOT NULL,
+        [Name] NVARCHAR(256) NULL,
+        [PhoneNumber] NVARCHAR(128) NULL,
+        [Address] NVARCHAR(512) NULL,
+        [City] NVARCHAR(128) NULL,
+        [FirstCall] BIT NULL,
+        [CreatedAtUtc] DATETIME2 NULL,
+        [UpdatedAtUtc] DATETIME2 NULL,
+        CONSTRAINT [FK_IncidentCallers_Incidents] FOREIGN KEY ([IncidentId]) REFERENCES [dbo].[Incidents]([Id]) ON DELETE CASCADE
+    );
+END
+IF OBJECT_ID(N'[dbo].[IncidentComments]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[IncidentComments]
+    (
+        [Id] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [IncidentId] BIGINT NOT NULL,
+        [Message] NVARCHAR(MAX) NOT NULL,
+        [OccurredAtUtc] DATETIME2 NULL,
+        [CreatedBy] NVARCHAR(128) NULL,
+        [CreatedAgency] NVARCHAR(128) NULL,
+        CONSTRAINT [FK_IncidentComments_Incidents] FOREIGN KEY ([IncidentId]) REFERENCES [dbo].[Incidents]([Id]) ON DELETE CASCADE
+    );
+END
+IF OBJECT_ID(N'[dbo].[IncidentUnits]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[IncidentUnits]
+    (
+        [Id] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [IncidentId] BIGINT NOT NULL,
+        [AgencyId] INT NULL,
+        [UnitIdentifier] NVARCHAR(128) NOT NULL,
+        [Station] NVARCHAR(128) NULL,
+        [UnitType] NVARCHAR(128) NULL,
+        [CurrentStatus] NVARCHAR(64) NULL,
+        [CreatedAtUtc] DATETIME2 NULL,
+        [UpdatedAtUtc] DATETIME2 NULL,
+        CONSTRAINT [FK_IncidentUnits_Incidents] FOREIGN KEY ([IncidentId]) REFERENCES [dbo].[Incidents]([Id]) ON DELETE CASCADE
+    );
+    CREATE INDEX [IX_IncidentUnits_IncidentId_AgencyId_UnitIdentifier] ON [dbo].[IncidentUnits]([IncidentId],[AgencyId],[UnitIdentifier]);
+END
+IF OBJECT_ID(N'[dbo].[UnitStatusEvents]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[UnitStatusEvents]
+    (
+        [Id] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [IncidentId] BIGINT NOT NULL,
+        [AgencyId] INT NULL,
+        [UnitIdentifier] NVARCHAR(128) NOT NULL,
+        [StatusCodeRaw] NVARCHAR(64) NULL,
+        [StatusCodeNormalized] NVARCHAR(64) NULL,
+        [OccurredAtUtc] DATETIME2 NULL,
+        [SourceText] NVARCHAR(MAX) NULL,
+        [CreatedBy] NVARCHAR(128) NULL,
+        [CreatedAgency] NVARCHAR(128) NULL,
+        CONSTRAINT [FK_UnitStatusEvents_Incidents] FOREIGN KEY ([IncidentId]) REFERENCES [dbo].[Incidents]([Id]) ON DELETE CASCADE
+    );
+    CREATE INDEX [IX_UnitStatusEvents_IncidentId_AgencyId_UnitIdentifier] ON [dbo].[UnitStatusEvents]([IncidentId],[AgencyId],[UnitIdentifier]);
+END
+IF OBJECT_ID(N'[dbo].[UnitTimelineFacts]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[UnitTimelineFacts]
+    (
+        [Id] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [IncidentId] BIGINT NOT NULL,
+        [AgencyId] INT NULL,
+        [UnitIdentifier] NVARCHAR(128) NOT NULL,
+        [DispatchedAtUtc] DATETIME2 NULL,
+        [EnrouteAtUtc] DATETIME2 NULL,
+        [ArrivedAtUtc] DATETIME2 NULL,
+        [TransportBeginAtUtc] DATETIME2 NULL,
+        [TransportCompleteAtUtc] DATETIME2 NULL,
+        [ClearedAtUtc] DATETIME2 NULL,
+        [InQuartersAtUtc] DATETIME2 NULL,
+        [UpdatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_UnitTimelineFacts_UpdatedAtUtc] DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT [FK_UnitTimelineFacts_Incidents] FOREIGN KEY ([IncidentId]) REFERENCES [dbo].[Incidents]([Id]) ON DELETE CASCADE
+    );
+    CREATE INDEX [IX_UnitTimelineFacts_IncidentId_AgencyId_UnitIdentifier] ON [dbo].[UnitTimelineFacts]([IncidentId],[AgencyId],[UnitIdentifier]);
+END
+IF OBJECT_ID(N'[dbo].[IncidentAssignments]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[IncidentAssignments]
+    (
+        [Id] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [IncidentId] BIGINT NOT NULL,
+        [AgencyId] INT NOT NULL,
+        [DeviceId] NVARCHAR(128) NULL,
+        [AssignmentKind] NVARCHAR(64) NULL,
+        [CreatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_IncidentAssignments_CreatedAtUtc] DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT [FK_IncidentAssignments_Incidents] FOREIGN KEY ([IncidentId]) REFERENCES [dbo].[Incidents]([Id]) ON DELETE CASCADE
+    );
+END
+IF OBJECT_ID(N'[dbo].[IncidentSyncLog]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[IncidentSyncLog]
+    (
+        [Id] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [IncidentId] BIGINT NOT NULL,
+        [AgencyId] INT NOT NULL,
+        [Scope] NVARCHAR(64) NOT NULL CONSTRAINT [DF_IncidentSyncLog_Scope] DEFAULT N'incident',
+        [ChangeType] NVARCHAR(64) NOT NULL CONSTRAINT [DF_IncidentSyncLog_ChangeType] DEFAULT N'upsert',
+        [ChangedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_IncidentSyncLog_ChangedAtUtc] DEFAULT SYSUTCDATETIME(),
+        [AckedAtUtc] DATETIME2 NULL,
+        [DeviceId] NVARCHAR(128) NULL,
+        [Notes] NVARCHAR(MAX) NULL,
+        CONSTRAINT [FK_IncidentSyncLog_Incidents] FOREIGN KEY ([IncidentId]) REFERENCES [dbo].[Incidents]([Id]) ON DELETE CASCADE
+    );
+    CREATE INDEX [IX_IncidentSyncLog_AgencyId_ChangedAtUtc] ON [dbo].[IncidentSyncLog]([AgencyId],[ChangedAtUtc]);
+END
+";
+
+    await db.Database.ExecuteSqlRawAsync(sql);
+}
 static async Task EnsureIngestSchemaAsync(AppDbContext db)
 {
     if (!db.Database.IsSqlServer())
