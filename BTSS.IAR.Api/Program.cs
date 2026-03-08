@@ -161,6 +161,7 @@ using (var scope = app.Services.CreateScope())
     await EnsureEpic5SchemaAsync(db);
     await EnsureEpic10SchemaAsync(db);
     await EnsureEpic13SchemaAsync(db);
+    await EnsureEpic3SchemaAsync(db);
     await EnsureEpic2SchemaAsync(db);
     await EnsureIngestSchemaAsync(db);
     await scope.ServiceProvider.GetRequiredService<HumanAuthService>().SeedDefaultsAsync();
@@ -554,6 +555,237 @@ api.MapPost("/incidents/{id:long}/rebuild-timeline", async (HttpContext http, Ap
     return Results.Ok(new { incidentId = id, rebuilt = count });
 }).RequireAuthorization();
 
+api.MapGet("/reports/calls", async (HttpContext http, AppDbContext db, int? agencyId, string? status, bool? closed, int? take) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (effectiveAgencyId is null)
+        return Results.Forbid();
+
+    var limit = Math.Clamp(take ?? 100, 1, 500);
+    var query = db.Incidents.AsNoTracking()
+        .Where(x => db.IncidentAgencies.Any(ia => ia.IncidentId == x.Id && ia.AgencyId == effectiveAgencyId.Value));
+
+    if (!string.IsNullOrWhiteSpace(status))
+        query = query.Where(x => x.Status == status);
+    if (closed.HasValue)
+        query = closed.Value ? query.Where(x => x.ClosedAtUtc != null) : query.Where(x => x.ClosedAtUtc == null);
+
+    var items = await query
+        .OrderByDescending(x => x.UpdatedAtUtc)
+        .Take(limit)
+        .Select(x => new IncidentListItemDto(
+            x.Id,
+            x.ExternalIncidentId,
+            x.Type,
+            x.Priority,
+            x.Address,
+            x.LocationName,
+            x.Status,
+            x.DispatchedAtUtc,
+            x.ClosedAtUtc,
+            x.UpdatedAtUtc,
+            db.IncidentAgencies.Count(ia => ia.IncidentId == x.Id)))
+        .ToListAsync();
+
+    return Results.Ok(new { items, agencyId = effectiveAgencyId.Value, count = items.Count });
+}).RequireAuthorization();
+
+api.MapGet("/reports/calls/{incidentId:long}", async (HttpContext http, AppDbContext db, long incidentId, int? agencyId) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (!await CanAccessIncidentAsync(db, incidentId, effectiveAgencyId))
+        return Results.Forbid();
+
+    var incident = await db.Incidents.AsNoTracking().FirstOrDefaultAsync(x => x.Id == incidentId);
+    if (incident is null)
+        return Results.NotFound();
+
+    var agencies = await db.IncidentAgencies.AsNoTracking()
+        .Where(x => x.IncidentId == incidentId)
+        .Join(db.Agencies, ia => ia.AgencyId, a => a.Id, (ia, a) => new IncidentAgencySummaryDto(ia.AgencyId, a.Code, a.Name, ia.AgencyEventId, ia.DispatchGroup, ia.CaseNumber, ia.IsPrimary))
+        .OrderByDescending(x => x.IsPrimary).ThenBy(x => x.AgencyName)
+        .ToArrayAsync();
+
+    var callers = await db.IncidentCallers.AsNoTracking()
+        .Where(x => x.IncidentId == incidentId)
+        .OrderBy(x => x.CreatedAtUtc)
+        .Select(x => new IncidentCallerDto(x.Name, x.PhoneNumber, x.Address, x.City, x.FirstCall, x.CreatedAtUtc))
+        .ToArrayAsync();
+
+    var comments = await db.IncidentComments.AsNoTracking()
+        .Where(x => x.IncidentId == incidentId)
+        .OrderBy(x => x.OccurredAtUtc).ThenBy(x => x.Id)
+        .Select(x => new IncidentCommentDto(x.Id, x.Message, x.OccurredAtUtc, x.CreatedBy, x.CreatedAgency))
+        .ToArrayAsync();
+
+    var units = await db.IncidentUnits.AsNoTracking()
+        .Where(x => x.IncidentId == incidentId && (x.AgencyId == null || x.AgencyId == effectiveAgencyId))
+        .OrderBy(x => x.UnitIdentifier)
+        .Select(x => new IncidentUnitDto(x.Id, x.AgencyId, x.UnitIdentifier, x.Station, x.UnitType, x.CurrentStatus, x.CreatedAtUtc, x.UpdatedAtUtc))
+        .ToArrayAsync();
+
+    var events = await db.UnitStatusEvents.AsNoTracking()
+        .Where(x => x.IncidentId == incidentId && (x.AgencyId == null || x.AgencyId == effectiveAgencyId))
+        .OrderBy(x => x.UnitIdentifier).ThenBy(x => x.OccurredAtUtc).ThenBy(x => x.Id)
+        .Select(x => new UnitStatusEventDto(x.Id, x.AgencyId, x.UnitIdentifier, x.StatusCodeRaw, x.StatusCodeNormalized, x.OccurredAtUtc, x.SourceText, x.CreatedBy, x.CreatedAgency))
+        .ToArrayAsync();
+
+    var pivot = await BuildPivotRowsAsync(db, incidentId, effectiveAgencyId.Value);
+    var detail = new IncidentDetailDto(incident.Id, incident.ExternalIncidentId, incident.SourceSystemId, incident.AgencyPrimaryId, incident.Type, incident.Priority, incident.Address, incident.LocationName, incident.Latitude, incident.Longitude, incident.Coordinates, incident.Status, incident.DispatchedAtUtc, incident.ClosedAtUtc, incident.SourceCreatedAtUtc, incident.SourceUpdatedAtUtc, incident.CreatedAtUtc, incident.UpdatedAtUtc, agencies, callers);
+    var printableHtml = BuildPrintableHtml(detail, agencies, callers, comments, units, events, pivot);
+    return Results.Ok(new CallReportDto(detail, agencies, callers, comments, units, events, pivot, printableHtml));
+}).RequireAuthorization();
+
+api.MapGet("/reports/calls/{incidentId:long}/pivot", async (HttpContext http, AppDbContext db, long incidentId, int? agencyId) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (!await CanAccessIncidentAsync(db, incidentId, effectiveAgencyId))
+        return Results.Forbid();
+
+    var rows = await BuildPivotRowsAsync(db, incidentId, effectiveAgencyId!.Value);
+    return Results.Ok(new { incidentId, agencyId = effectiveAgencyId.Value, rows, count = rows.Length });
+}).RequireAuthorization();
+
+api.MapGet("/reports/definitions", async (HttpContext http, AppDbContext db, int? agencyId) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (effectiveAgencyId is null)
+        return Results.Forbid();
+
+    var items = await db.ReportDefinitions.AsNoTracking()
+        .Where(x => x.IsEnabled && (x.AgencyId == null || x.AgencyId == effectiveAgencyId.Value))
+        .OrderByDescending(x => x.IsSystem).ThenBy(x => x.Name)
+        .ToListAsync();
+
+    return Results.Ok(items.Select(MapReportDefinitionDto));
+}).RequireAuthorization();
+
+api.MapGet("/reports/saved", async (HttpContext http, AppDbContext db, int? agencyId) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (effectiveAgencyId is null)
+        return Results.Forbid();
+
+    var items = await db.SavedReports.AsNoTracking()
+        .Where(x => x.AgencyId == effectiveAgencyId.Value)
+        .OrderByDescending(x => x.UpdatedAtUtc)
+        .ToListAsync();
+
+    return Results.Ok(items.Select(MapSavedReportDto));
+}).RequireAuthorization();
+
+api.MapPost("/reports/saved", async (HttpContext http, AppDbContext db, SaveReportRequest request, int? agencyId) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (effectiveAgencyId is null)
+        return Results.Forbid();
+
+    var userId = ResolveUserId(http.User);
+    var entity = new SavedReportEntity
+    {
+        AgencyId = effectiveAgencyId.Value,
+        Name = string.IsNullOrWhiteSpace(request.Name) ? $"{request.ReportType} report" : request.Name.Trim(),
+        ReportType = string.IsNullOrWhiteSpace(request.ReportType) ? "call" : request.ReportType.Trim(),
+        ParametersJson = JsonSerializer.Serialize(request.Parameters, JsonUtil.Options),
+        CreatedByUserId = userId,
+        IsShared = request.IsShared,
+        CreatedAtUtc = DateTime.UtcNow,
+        UpdatedAtUtc = DateTime.UtcNow
+    };
+
+    db.SavedReports.Add(entity);
+    await db.SaveChangesAsync();
+    return Results.Ok(MapSavedReportDto(entity));
+}).RequireAuthorization();
+
+api.MapPost("/reports/run", async (HttpContext http, AppDbContext db, RunReportRequest request, int? agencyId) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (effectiveAgencyId is null)
+        return Results.Forbid();
+
+    JsonElement parameters = request.Parameters;
+    if (request.SavedReportId.HasValue)
+    {
+        var saved = await db.SavedReports.AsNoTracking().FirstOrDefaultAsync(x => x.Id == request.SavedReportId.Value && x.AgencyId == effectiveAgencyId.Value);
+        if (saved is null)
+            return Results.NotFound();
+        parameters = ParseJsonElement(saved.ParametersJson);
+    }
+
+    var summary = await BuildExecutionSummaryAsync(db, effectiveAgencyId.Value, request.ReportType, parameters);
+    var execution = new ReportExecutionEntity
+    {
+        AgencyId = effectiveAgencyId.Value,
+        SavedReportId = request.SavedReportId,
+        ReportType = string.IsNullOrWhiteSpace(request.ReportType) ? "call" : request.ReportType.Trim(),
+        ParametersJson = JsonSerializer.Serialize(parameters, JsonUtil.Options),
+        ResultSummaryJson = JsonSerializer.Serialize(summary, JsonUtil.Options),
+        ExecutedByUserId = ResolveUserId(http.User),
+        ExecutedAtUtc = DateTime.UtcNow
+    };
+
+    db.ReportExecutions.Add(execution);
+    await db.SaveChangesAsync();
+    return Results.Ok(MapReportExecutionDto(execution));
+}).RequireAuthorization();
+
+api.MapPost("/reports/export", async (HttpContext http, AppDbContext db, ExportReportRequest request, int? agencyId) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (effectiveAgencyId is null)
+        return Results.Forbid();
+
+    var format = string.IsNullOrWhiteSpace(request.Format) ? "csv" : request.Format.Trim().ToLowerInvariant();
+    var reportType = string.IsNullOrWhiteSpace(request.ReportType) ? "call" : request.ReportType.Trim();
+    string payload;
+    string fileName;
+    string contentType;
+
+    if (request.IncidentId.HasValue)
+    {
+        if (!await CanAccessIncidentAsync(db, request.IncidentId.Value, effectiveAgencyId.Value))
+            return Results.Forbid();
+        var detail = await BuildCallReportAsync(db, request.IncidentId.Value, effectiveAgencyId.Value);
+        if (detail is null)
+            return Results.NotFound();
+        if (format == "html")
+        {
+            payload = detail.PrintableHtml;
+            fileName = $"call-report-{request.IncidentId.Value}.html";
+            contentType = "text/html; charset=utf-8";
+        }
+        else
+        {
+            payload = BuildPivotCsv(detail.PivotRows);
+            fileName = $"call-report-{request.IncidentId.Value}.csv";
+            contentType = "text/csv; charset=utf-8";
+        }
+    }
+    else
+    {
+        var summary = await BuildExecutionSummaryAsync(db, effectiveAgencyId.Value, reportType, request.Parameters);
+        payload = BuildSummaryCsv(summary);
+        fileName = $"{reportType}-summary-{DateTime.UtcNow:yyyyMMddHHmmss}.csv";
+        contentType = "text/csv; charset=utf-8";
+    }
+
+    var export = new ExportJobEntity
+    {
+        AgencyId = effectiveAgencyId.Value,
+        ReportExecutionId = request.ExecutionId,
+        Format = format,
+        FileName = fileName,
+        ContentType = contentType,
+        PayloadText = payload,
+        RequestedByUserId = ResolveUserId(http.User),
+        CreatedAtUtc = DateTime.UtcNow
+    };
+
+    db.ExportJobs.Add(export);
+    await db.SaveChangesAsync();
+    return Results.File(Encoding.UTF8.GetBytes(payload), contentType, fileName);
+}).RequireAuthorization();
 api.MapGet("/sync/incidents", async (HttpContext http, AppDbContext db, int? agencyId, DateTime? sinceUtc, int? take) =>
 {
     var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
@@ -2301,6 +2533,342 @@ static IEnumerable<(string AgencyCode, string? DispatchGroup, string? CaseNumber
     }
 }
 
+
+static int? ResolveUserId(ClaimsPrincipal user)
+{
+    var userIdValue = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+    return int.TryParse(userIdValue, out var userId) ? userId : null;
+}
+
+static JsonElement ParseJsonElement(string? json)
+{
+    using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
+    return doc.RootElement.Clone();
+}
+
+static SavedReportDto MapSavedReportDto(SavedReportEntity entity) =>
+    new(entity.Id, entity.AgencyId, entity.Name, entity.ReportType, ParseJsonElement(entity.ParametersJson), entity.CreatedByUserId, entity.IsShared, entity.CreatedAtUtc, entity.UpdatedAtUtc);
+
+static ReportDefinitionDto MapReportDefinitionDto(ReportDefinitionEntity entity) =>
+    new(entity.Id, entity.AgencyId, entity.Key, entity.Name, entity.Description, ParseJsonElement(entity.DefaultParametersJson), entity.IsSystem, entity.IsEnabled, entity.UpdatedAtUtc);
+
+static ReportExecutionDto MapReportExecutionDto(ReportExecutionEntity entity) =>
+    new(entity.Id, entity.AgencyId, entity.SavedReportId, entity.ReportType, ParseJsonElement(entity.ParametersJson), ParseJsonElement(entity.ResultSummaryJson), entity.ExecutedByUserId, entity.ExecutedAtUtc);
+
+static async Task<PivotRowDto[]> BuildPivotRowsAsync(AppDbContext db, long incidentId, int agencyId)
+{
+    var facts = await db.UnitTimelineFacts.AsNoTracking()
+        .Where(x => x.IncidentId == incidentId && (x.AgencyId == null || x.AgencyId == agencyId))
+        .OrderBy(x => x.UnitIdentifier)
+        .ToListAsync();
+
+    return facts.Select(x => new PivotRowDto(
+        x.AgencyId,
+        x.UnitIdentifier,
+        x.DispatchedAtUtc,
+        x.EnrouteAtUtc,
+        x.ArrivedAtUtc,
+        x.TransportBeginAtUtc,
+        x.TransportCompleteAtUtc,
+        x.ClearedAtUtc,
+        x.InQuartersAtUtc,
+        MinutesBetween(x.DispatchedAtUtc, x.EnrouteAtUtc),
+        MinutesBetween(x.EnrouteAtUtc, x.ArrivedAtUtc),
+        MinutesBetween(x.ArrivedAtUtc, x.ClearedAtUtc),
+        MinutesBetween(x.DispatchedAtUtc, x.ClearedAtUtc)
+    )).ToArray();
+}
+
+static double? MinutesBetween(DateTime? start, DateTime? end)
+{
+    if (!start.HasValue || !end.HasValue)
+        return null;
+    return Math.Round((end.Value - start.Value).TotalMinutes, 2);
+}
+
+static async Task<CallReportDto?> BuildCallReportAsync(AppDbContext db, long incidentId, int agencyId)
+{
+    var incident = await db.Incidents.AsNoTracking().FirstOrDefaultAsync(x => x.Id == incidentId);
+    if (incident is null)
+        return null;
+
+    var agencies = await db.IncidentAgencies.AsNoTracking()
+        .Where(x => x.IncidentId == incidentId)
+        .Join(db.Agencies, ia => ia.AgencyId, a => a.Id, (ia, a) => new IncidentAgencySummaryDto(ia.AgencyId, a.Code, a.Name, ia.AgencyEventId, ia.DispatchGroup, ia.CaseNumber, ia.IsPrimary))
+        .OrderByDescending(x => x.IsPrimary).ThenBy(x => x.AgencyName)
+        .ToArrayAsync();
+    var callers = await db.IncidentCallers.AsNoTracking().Where(x => x.IncidentId == incidentId).OrderBy(x => x.CreatedAtUtc)
+        .Select(x => new IncidentCallerDto(x.Name, x.PhoneNumber, x.Address, x.City, x.FirstCall, x.CreatedAtUtc)).ToArrayAsync();
+    var comments = await db.IncidentComments.AsNoTracking().Where(x => x.IncidentId == incidentId).OrderBy(x => x.OccurredAtUtc).ThenBy(x => x.Id)
+        .Select(x => new IncidentCommentDto(x.Id, x.Message, x.OccurredAtUtc, x.CreatedBy, x.CreatedAgency)).ToArrayAsync();
+    var units = await db.IncidentUnits.AsNoTracking().Where(x => x.IncidentId == incidentId && (x.AgencyId == null || x.AgencyId == agencyId)).OrderBy(x => x.UnitIdentifier)
+        .Select(x => new IncidentUnitDto(x.Id, x.AgencyId, x.UnitIdentifier, x.Station, x.UnitType, x.CurrentStatus, x.CreatedAtUtc, x.UpdatedAtUtc)).ToArrayAsync();
+    var events = await db.UnitStatusEvents.AsNoTracking().Where(x => x.IncidentId == incidentId && (x.AgencyId == null || x.AgencyId == agencyId)).OrderBy(x => x.UnitIdentifier).ThenBy(x => x.OccurredAtUtc).ThenBy(x => x.Id)
+        .Select(x => new UnitStatusEventDto(x.Id, x.AgencyId, x.UnitIdentifier, x.StatusCodeRaw, x.StatusCodeNormalized, x.OccurredAtUtc, x.SourceText, x.CreatedBy, x.CreatedAgency)).ToArrayAsync();
+    var pivot = await BuildPivotRowsAsync(db, incidentId, agencyId);
+    var detail = new IncidentDetailDto(incident.Id, incident.ExternalIncidentId, incident.SourceSystemId, incident.AgencyPrimaryId, incident.Type, incident.Priority, incident.Address, incident.LocationName, incident.Latitude, incident.Longitude, incident.Coordinates, incident.Status, incident.DispatchedAtUtc, incident.ClosedAtUtc, incident.SourceCreatedAtUtc, incident.SourceUpdatedAtUtc, incident.CreatedAtUtc, incident.UpdatedAtUtc, agencies, callers);
+    var printableHtml = BuildPrintableHtml(detail, agencies, callers, comments, units, events, pivot);
+    return new CallReportDto(detail, agencies, callers, comments, units, events, pivot, printableHtml);
+}
+
+static object BuildSummaryRow(IncidentEntity x) => new
+{
+    x.Id,
+    x.ExternalIncidentId,
+    x.Type,
+    x.Priority,
+    x.Address,
+    x.Status,
+    x.DispatchedAtUtc,
+    x.ClosedAtUtc,
+    x.UpdatedAtUtc
+};
+
+static async Task<object> BuildExecutionSummaryAsync(AppDbContext db, int agencyId, string? reportType, JsonElement parameters)
+{
+    var normalized = (reportType ?? "call").Trim().ToLowerInvariant();
+    if (normalized == "call" && TryGetIncidentId(parameters, out var incidentId))
+    {
+        var detail = await BuildCallReportAsync(db, incidentId, agencyId);
+        return new
+        {
+            type = "call",
+            incidentId,
+            found = detail is not null,
+            unitCount = detail?.Units.Length ?? 0,
+            pivotCount = detail?.PivotRows.Length ?? 0,
+            commentCount = detail?.Comments.Length ?? 0
+        };
+    }
+
+    var take = TryGetInt(parameters, "take") ?? 50;
+    var rows = await db.Incidents.AsNoTracking()
+        .Where(x => db.IncidentAgencies.Any(ia => ia.IncidentId == x.Id && ia.AgencyId == agencyId))
+        .OrderByDescending(x => x.UpdatedAtUtc)
+        .Take(Math.Clamp(take, 1, 500))
+        .ToListAsync();
+
+    return new
+    {
+        type = normalized,
+        count = rows.Count,
+        items = rows.Select(BuildSummaryRow).ToArray()
+    };
+}
+
+static bool TryGetIncidentId(JsonElement parameters, out long incidentId)
+{
+    incidentId = 0;
+    if (parameters.ValueKind != JsonValueKind.Object)
+        return false;
+    if (!parameters.TryGetProperty("incidentId", out var element))
+        return false;
+    if (element.ValueKind == JsonValueKind.Number)
+        return element.TryGetInt64(out incidentId);
+    if (element.ValueKind == JsonValueKind.String)
+        return long.TryParse(element.GetString(), out incidentId);
+    return false;
+}
+
+static int? TryGetInt(JsonElement parameters, string name)
+{
+    if (parameters.ValueKind != JsonValueKind.Object)
+        return null;
+    if (!parameters.TryGetProperty(name, out var element))
+        return null;
+    if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var intVal))
+        return intVal;
+    if (element.ValueKind == JsonValueKind.String && int.TryParse(element.GetString(), out intVal))
+        return intVal;
+    return null;
+}
+
+static string BuildPrintableHtml(IncidentDetailDto incident, IncidentAgencySummaryDto[] agencies, IncidentCallerDto[] callers, IncidentCommentDto[] comments, IncidentUnitDto[] units, UnitStatusEventDto[] events, PivotRowDto[] pivot)
+{
+    static string Esc(string? value) => System.Net.WebUtility.HtmlEncode(value ?? string.Empty);
+    var sb = new StringBuilder();
+    sb.Append(@"<!doctype html><html><head><meta charset=""utf-8""><title>Call Report</title><style>body{font-family:Segoe UI,Arial,sans-serif;margin:24px;}table{border-collapse:collapse;width:100%;margin-top:12px;}th,td{border:1px solid #ccc;padding:6px 8px;font-size:12px;}h1,h2{margin:0 0 8px;} .meta{margin-bottom:16px;} .section{margin-top:20px;}</style></head><body>");
+    sb.Append($"<h1>Call Report - {Esc(incident.ExternalIncidentId)}</h1>");
+    sb.Append($"<div class='meta'><div><b>Status:</b> {Esc(incident.Status)}</div><div><b>Type:</b> {Esc(incident.Type)}</div><div><b>Priority:</b> {Esc(incident.Priority)}</div><div><b>Address:</b> {Esc(incident.Address)}</div></div>");
+    sb.Append("<div class='section'><h2>Agencies</h2><table><tr><th>Agency</th><th>Event</th><th>Dispatch Group</th><th>Case</th><th>Primary</th></tr>");
+    foreach (var row in agencies) sb.Append($"<tr><td>{Esc(row.AgencyName)}</td><td>{Esc(row.AgencyEventId)}</td><td>{Esc(row.DispatchGroup)}</td><td>{Esc(row.CaseNumber)}</td><td>{row.IsPrimary}</td></tr>");
+    sb.Append("</table></div>");
+    sb.Append("<div class='section'><h2>Pivot</h2><table><tr><th>Unit</th><th>Dispatched</th><th>Enroute</th><th>Arrived</th><th>Transport Begin</th><th>Transport Complete</th><th>Cleared</th><th>In Quarters</th></tr>");
+    foreach (var row in pivot) sb.Append($"<tr><td>{Esc(row.UnitIdentifier)}</td><td>{row.DispatchedAtUtc:u}</td><td>{row.EnrouteAtUtc:u}</td><td>{row.ArrivedAtUtc:u}</td><td>{row.TransportBeginAtUtc:u}</td><td>{row.TransportCompleteAtUtc:u}</td><td>{row.ClearedAtUtc:u}</td><td>{row.InQuartersAtUtc:u}</td></tr>");
+    sb.Append("</table></div>");
+    if (comments.Length > 0) { sb.Append("<div class='section'><h2>Comments</h2><table><tr><th>When</th><th>Message</th></tr>"); foreach (var row in comments) sb.Append($"<tr><td>{row.OccurredAtUtc:u}</td><td>{Esc(row.Message)}</td></tr>"); sb.Append("</table></div>"); }
+    sb.Append("</body></html>");
+    return sb.ToString();
+}
+
+static string CsvEscape(string? value)
+{
+    var text = value ?? string.Empty;
+    if (text.Contains('"') || text.Contains(',') || text.Contains("\n") || text.Contains("\r\n"))
+        return '"' + text.Replace("\"", "\"\"") + '"';
+    return text;
+}
+
+static string BuildPivotCsv(IEnumerable<PivotRowDto> rows)
+{
+    var sb = new StringBuilder();
+    sb.AppendLine("AgencyId,UnitIdentifier,DispatchedAtUtc,EnrouteAtUtc,ArrivedAtUtc,TransportBeginAtUtc,TransportCompleteAtUtc,ClearedAtUtc,InQuartersAtUtc,DispatchToEnrouteMinutes,EnrouteToArrivalMinutes,SceneToClearMinutes,DispatchToClearMinutes");
+    foreach (var row in rows)
+    {
+        sb.AppendLine(string.Join(",", new[]
+        {
+            row.AgencyId?.ToString() ?? string.Empty,
+            CsvEscape(row.UnitIdentifier),
+            row.DispatchedAtUtc?.ToString("u") ?? string.Empty,
+            row.EnrouteAtUtc?.ToString("u") ?? string.Empty,
+            row.ArrivedAtUtc?.ToString("u") ?? string.Empty,
+            row.TransportBeginAtUtc?.ToString("u") ?? string.Empty,
+            row.TransportCompleteAtUtc?.ToString("u") ?? string.Empty,
+            row.ClearedAtUtc?.ToString("u") ?? string.Empty,
+            row.InQuartersAtUtc?.ToString("u") ?? string.Empty,
+            row.DispatchToEnrouteMinutes?.ToString() ?? string.Empty,
+            row.EnrouteToArrivalMinutes?.ToString() ?? string.Empty,
+            row.SceneToClearMinutes?.ToString() ?? string.Empty,
+            row.DispatchToClearMinutes?.ToString() ?? string.Empty
+        }));
+    }
+    return sb.ToString();
+}
+
+static string BuildSummaryCsv(object summary)
+{
+    return JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true });
+}
+
+static async Task EnsureEpic3SchemaAsync(AppDbContext db)
+{
+    if (db.Database.IsSqlServer())
+    {
+        const string sql = @"
+IF OBJECT_ID(N'[dbo].[StatusNormalizationRules]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[StatusNormalizationRules]
+    (
+        [Id] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [AgencyId] INT NULL,
+        [RawCode] NVARCHAR(64) NOT NULL,
+        [NormalizedCode] NVARCHAR(128) NOT NULL,
+        [SortOrder] INT NOT NULL CONSTRAINT [DF_StatusNormalizationRules_SortOrder] DEFAULT 0,
+        [IsEnabled] BIT NOT NULL CONSTRAINT [DF_StatusNormalizationRules_IsEnabled] DEFAULT 1,
+        [UpdatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_StatusNormalizationRules_UpdatedAtUtc] DEFAULT SYSUTCDATETIME()
+    );
+    CREATE UNIQUE INDEX [IX_StatusNormalizationRules_AgencyId_RawCode] ON [dbo].[StatusNormalizationRules]([AgencyId],[RawCode]);
+END
+IF OBJECT_ID(N'[dbo].[SavedReports]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[SavedReports]
+    (
+        [Id] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [AgencyId] INT NOT NULL,
+        [Name] NVARCHAR(256) NOT NULL,
+        [ReportType] NVARCHAR(64) NOT NULL,
+        [ParametersJson] NVARCHAR(MAX) NOT NULL,
+        [CreatedByUserId] INT NULL,
+        [IsShared] BIT NOT NULL CONSTRAINT [DF_SavedReports_IsShared] DEFAULT 1,
+        [CreatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_SavedReports_CreatedAtUtc] DEFAULT SYSUTCDATETIME(),
+        [UpdatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_SavedReports_UpdatedAtUtc] DEFAULT SYSUTCDATETIME()
+    );
+    CREATE INDEX [IX_SavedReports_AgencyId_Name] ON [dbo].[SavedReports]([AgencyId],[Name]);
+END
+IF OBJECT_ID(N'[dbo].[ReportDefinitions]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[ReportDefinitions]
+    (
+        [Id] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [AgencyId] INT NULL,
+        [Key] NVARCHAR(64) NOT NULL,
+        [Name] NVARCHAR(256) NOT NULL,
+        [Description] NVARCHAR(MAX) NOT NULL,
+        [DefaultParametersJson] NVARCHAR(MAX) NOT NULL,
+        [IsSystem] BIT NOT NULL CONSTRAINT [DF_ReportDefinitions_IsSystem] DEFAULT 1,
+        [IsEnabled] BIT NOT NULL CONSTRAINT [DF_ReportDefinitions_IsEnabled] DEFAULT 1,
+        [UpdatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_ReportDefinitions_UpdatedAtUtc] DEFAULT SYSUTCDATETIME()
+    );
+    CREATE UNIQUE INDEX [IX_ReportDefinitions_AgencyId_Key] ON [dbo].[ReportDefinitions]([AgencyId],[Key]);
+END
+IF OBJECT_ID(N'[dbo].[ReportExecutions]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[ReportExecutions]
+    (
+        [Id] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [AgencyId] INT NOT NULL,
+        [SavedReportId] BIGINT NULL,
+        [ReportType] NVARCHAR(64) NOT NULL,
+        [ParametersJson] NVARCHAR(MAX) NOT NULL,
+        [ResultSummaryJson] NVARCHAR(MAX) NOT NULL,
+        [ExecutedByUserId] INT NULL,
+        [ExecutedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_ReportExecutions_ExecutedAtUtc] DEFAULT SYSUTCDATETIME()
+    );
+    CREATE INDEX [IX_ReportExecutions_AgencyId_ExecutedAtUtc] ON [dbo].[ReportExecutions]([AgencyId],[ExecutedAtUtc]);
+END
+IF OBJECT_ID(N'[dbo].[ExportJobs]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[ExportJobs]
+    (
+        [Id] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [AgencyId] INT NOT NULL,
+        [ReportExecutionId] BIGINT NULL,
+        [Format] NVARCHAR(32) NOT NULL,
+        [FileName] NVARCHAR(260) NOT NULL,
+        [ContentType] NVARCHAR(128) NOT NULL,
+        [PayloadText] NVARCHAR(MAX) NOT NULL,
+        [RequestedByUserId] INT NULL,
+        [CreatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_ExportJobs_CreatedAtUtc] DEFAULT SYSUTCDATETIME()
+    );
+    CREATE INDEX [IX_ExportJobs_AgencyId_CreatedAtUtc] ON [dbo].[ExportJobs]([AgencyId],[CreatedAtUtc]);
+END";
+        await db.Database.ExecuteSqlRawAsync(sql);
+    }
+
+    var seedRules = new (string Raw, string Normalized, int SortOrder)[]
+    {
+        ("DP", "Dispatched", 10),
+        ("ER", "Enroute", 20),
+        ("OS", "Arrived", 30),
+        ("TR", "Transport Begin", 40),
+        ("TC", "Transport Complete", 50),
+        ("CU", "Cleared", 60),
+        ("AV", "In Quarters", 70),
+        ("AM", "In Quarters", 71),
+        ("AK", "In Quarters", 72),
+        ("AVAILABLE", "In Quarters", 73),
+        ("QUARTERS", "In Quarters", 74)
+    };
+    foreach (var rule in seedRules)
+    {
+        if (!await db.StatusNormalizationRules.AnyAsync(x => x.AgencyId == null && x.RawCode == rule.Raw))
+        {
+            db.StatusNormalizationRules.Add(new StatusNormalizationRuleEntity
+            {
+                AgencyId = null,
+                RawCode = rule.Raw,
+                NormalizedCode = rule.Normalized,
+                SortOrder = rule.SortOrder,
+                IsEnabled = true,
+                UpdatedAtUtc = DateTime.UtcNow
+            });
+        }
+    }
+
+    var definitions = new[]
+    {
+        new ReportDefinitionEntity { AgencyId = null, Key = "call", Name = "Call report", Description = "Printable incident report with comments, units, and pivot timeline.", DefaultParametersJson = "{\"incidentId\":0}", IsSystem = true, IsEnabled = true, UpdatedAtUtc = DateTime.UtcNow },
+        new ReportDefinitionEntity { AgencyId = null, Key = "call-list", Name = "Recent calls", Description = "Agency-filtered recent calls list for web reporting.", DefaultParametersJson = "{\"take\":50}", IsSystem = true, IsEnabled = true, UpdatedAtUtc = DateTime.UtcNow },
+        new ReportDefinitionEntity { AgencyId = null, Key = "pivot", Name = "Pivot dataset", Description = "Unit status timeline as report-ready pivot rows.", DefaultParametersJson = "{\"incidentId\":0}", IsSystem = true, IsEnabled = true, UpdatedAtUtc = DateTime.UtcNow }
+    };
+    foreach (var def in definitions)
+    {
+        if (!await db.ReportDefinitions.AnyAsync(x => x.AgencyId == def.AgencyId && x.Key == def.Key))
+            db.ReportDefinitions.Add(def);
+    }
+
+    await db.SaveChangesAsync();
+}
 static async Task EnsureEpic2SchemaAsync(AppDbContext db)
 {
     if (!db.Database.IsSqlServer())

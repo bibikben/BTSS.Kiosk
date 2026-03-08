@@ -1,0 +1,50 @@
+@page "/reports/saved"
+@inject HttpClient Http
+
+<PageTitle>Saved Reports</PageTitle>
+
+<RadzenStack Gap="1rem">
+    <RadzenRow AlignItems="AlignItems.Center">
+        <RadzenColumn Size="12" SizeMD="6"><RadzenText TextStyle="TextStyle.DisplayH5">Saved Reports</RadzenText></RadzenColumn>
+        <RadzenColumn Size="12" SizeMD="6">
+            <RadzenStack Orientation="Orientation.Horizontal" Gap="0.5rem" JustifyContent="JustifyContent.End">
+                <RadzenTextBox @bind-Value="newName" Placeholder="Report name" Style="width:16rem" />
+                <RadzenTextBox @bind-Value="incidentIdText" Placeholder="Incident Id" Style="width:10rem" />
+                <RadzenButton Text="Save Call Report" Click="SaveAsync" />
+            </RadzenStack>
+        </RadzenColumn>
+    </RadzenRow>
+
+    <RadzenCard>
+        <RadzenDataGrid Data="reports" TItem="SavedReportDto">
+            <Columns>
+                <RadzenDataGridColumn TItem="SavedReportDto" Property="Name" Title="Name" />
+                <RadzenDataGridColumn TItem="SavedReportDto" Property="ReportType" Title="Type" />
+                <RadzenDataGridColumn TItem="SavedReportDto" Property="UpdatedAtUtc" Title="Updated" />
+            </Columns>
+        </RadzenDataGrid>
+    </RadzenCard>
+</RadzenStack>
+
+@code {
+    private SavedReportDto[] reports = Array.Empty<SavedReportDto>();
+    private string? newName;
+    private string? incidentIdText;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        reports = await Http.GetFromJsonAsync<SavedReportDto[]>("/api/reports/saved") ?? Array.Empty<SavedReportDto>();
+    }
+
+    private async Task SaveAsync()
+    {
+        long.TryParse(incidentIdText, out var incidentId);
+        using var doc = System.Text.Json.JsonDocument.Parse($"{{\"incidentId\":{incidentId}}}");
+        var req = new SaveReportRequest(newName ?? "Saved call report", "call", doc.RootElement.Clone(), true);
+        var response = await Http.PostAsJsonAsync("/api/reports/saved", req);
+        if (response.IsSuccessStatusCode)
+            await LoadAsync();
+    }
+}

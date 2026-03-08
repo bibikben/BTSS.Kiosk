@@ -34,10 +34,13 @@
             <RadzenText Text="BTSS.IAR.Web" TextStyle="Radzen.Blazor.TextStyle.Subtitle1" class="rz-mb-0" style="color: var(--rz-sidebar-color);" />
         </RadzenStack>
         <RadzenPanelMenu>
-            <RadzenPanelMenuItem Text="Dashboard" Path="/" />
+            <RadzenPanelMenuItem Text="Dashboard" Path="/" Icon="dashboard" />
+            <RadzenPanelMenuItem Text="Reports" Path="/reports" Icon="assessment" />
+            <RadzenPanelMenuItem Text="Saved Reports" Path="/reports/saved" Icon="bookmark" />
+            <RadzenPanelMenuItem Text="Report Designer" Path="/reports/designer" Icon="edit_note" />
         </RadzenPanelMenu>
         <RadzenStack AlignItems="Radzen.AlignItems.Center" Gap="0" class="rz-py-4 rz-py-lg-6" Style="padding: var(--rz-panel-menu-item-padding);">
-            <RadzenText Text="Epic 1 auth scaffold" TextStyle="Radzen.Blazor.TextStyle.Caption" TagName="Radzen.Blazor.TagName.P" TextAlign="Radzen.TextAlign.Center" />
+            <RadzenText Text="Epic 3 reporting scaffold" TextStyle="Radzen.Blazor.TextStyle.Caption" TagName="Radzen.Blazor.TagName.P" TextAlign="Radzen.TextAlign.Center" />
         </RadzenStack>
     </RadzenSidebar>
 </RadzenLayout>

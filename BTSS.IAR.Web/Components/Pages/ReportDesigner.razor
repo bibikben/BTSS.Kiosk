@@ -1,0 +1,34 @@
+@page "/reports/designer"
+@inject HttpClient Http
+
+<PageTitle>Report Designer</PageTitle>
+
+<RadzenStack Gap="1rem">
+    <RadzenText TextStyle="TextStyle.DisplayH5">Report Designer</RadzenText>
+    <RadzenText>Use the built-in report definitions and save parameterized report presets for the current agency.</RadzenText>
+    <RadzenCard>
+        @if (definitions is null)
+        {
+            <RadzenText>Loading...</RadzenText>
+        }
+        else
+        {
+            <RadzenDataGrid Data="definitions" TItem="ReportDefinitionDto">
+                <Columns>
+                    <RadzenDataGridColumn TItem="ReportDefinitionDto" Property="Key" Title="Key" />
+                    <RadzenDataGridColumn TItem="ReportDefinitionDto" Property="Name" Title="Name" />
+                    <RadzenDataGridColumn TItem="ReportDefinitionDto" Property="Description" Title="Description" />
+                </Columns>
+            </RadzenDataGrid>
+        }
+    </RadzenCard>
+</RadzenStack>
+
+@code {
+    private ReportDefinitionDto[]? definitions;
+
+    protected override async Task OnInitializedAsync()
+    {
+        definitions = await Http.GetFromJsonAsync<ReportDefinitionDto[]>("/api/reports/definitions") ?? Array.Empty<ReportDefinitionDto>();
+    }
+}

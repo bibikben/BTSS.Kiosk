@@ -3,6 +3,7 @@ using BTSS.IAR.Api.Data;
 using BTSS.IAR.Web.Components;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.AspNetCore.Components.Server;
 using Microsoft.EntityFrameworkCore;
@@ -43,7 +44,12 @@ builder.Services.AddRadzenCookieThemeService(options =>
     options.Name = "BTSS.IAR.WebTheme";
     options.Duration = TimeSpan.FromDays(365);
 });
-builder.Services.AddHttpClient();
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddScoped(sp =>
+{
+    var nav = sp.GetRequiredService<NavigationManager>();
+    return new HttpClient { BaseAddress = new Uri(nav.BaseUri) };
+});
 var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())

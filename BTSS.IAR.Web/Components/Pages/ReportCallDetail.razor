@@ -1,0 +1,77 @@
+@page "/reports/calls/{IncidentId:long}"
+@inject HttpClient Http
+@inject NavigationManager Navigation
+
+<PageTitle>Call Report</PageTitle>
+
+@if (report is null)
+{
+    <RadzenText>Loading...</RadzenText>
+}
+else
+{
+    <RadzenStack Gap="1rem">
+        <RadzenRow AlignItems="AlignItems.Center">
+            <RadzenColumn Size="12" SizeMD="8">
+                <RadzenText TextStyle="TextStyle.DisplayH5">Call Report @report.Incident.ExternalIncidentId</RadzenText>
+                <RadzenText>@report.Incident.Type · @report.Incident.Priority · @report.Incident.Status</RadzenText>
+                <RadzenText>@report.Incident.Address</RadzenText>
+            </RadzenColumn>
+            <RadzenColumn Size="12" SizeMD="4">
+                <RadzenStack Orientation="Orientation.Horizontal" Gap="0.5rem" JustifyContent="JustifyContent.End">
+                    <RadzenButton Text="Pivot" Path="@($"/reports/pivot/{IncidentId}")" />
+                    <RadzenButton Text="Download CSV" Click="DownloadCsv" ButtonStyle="ButtonStyle.Secondary" />
+                    <RadzenButton Text="Download HTML" Click="DownloadHtml" ButtonStyle="ButtonStyle.Secondary" />
+                </RadzenStack>
+            </RadzenColumn>
+        </RadzenRow>
+
+        <RadzenTabs>
+            <Tabs>
+                <RadzenTabsItem Text="Pivot">
+                    <RadzenDataGrid Data="report.PivotRows" TItem="PivotRowDto">
+                        <Columns>
+                            <RadzenDataGridColumn TItem="PivotRowDto" Property="UnitIdentifier" Title="Unit" />
+                            <RadzenDataGridColumn TItem="PivotRowDto" Property="DispatchedAtUtc" Title="Dispatched" />
+                            <RadzenDataGridColumn TItem="PivotRowDto" Property="EnrouteAtUtc" Title="Enroute" />
+                            <RadzenDataGridColumn TItem="PivotRowDto" Property="ArrivedAtUtc" Title="Arrived" />
+                            <RadzenDataGridColumn TItem="PivotRowDto" Property="ClearedAtUtc" Title="Cleared" />
+                            <RadzenDataGridColumn TItem="PivotRowDto" Property="InQuartersAtUtc" Title="In Quarters" />
+                        </Columns>
+                    </RadzenDataGrid>
+                </RadzenTabsItem>
+                <RadzenTabsItem Text="Units">
+                    <RadzenDataGrid Data="report.Units" TItem="IncidentUnitDto">
+                        <Columns>
+                            <RadzenDataGridColumn TItem="IncidentUnitDto" Property="UnitIdentifier" Title="Unit" />
+                            <RadzenDataGridColumn TItem="IncidentUnitDto" Property="Station" Title="Station" />
+                            <RadzenDataGridColumn TItem="IncidentUnitDto" Property="UnitType" Title="Type" />
+                            <RadzenDataGridColumn TItem="IncidentUnitDto" Property="CurrentStatus" Title="Current Status" />
+                        </Columns>
+                    </RadzenDataGrid>
+                </RadzenTabsItem>
+                <RadzenTabsItem Text="Comments">
+                    <RadzenDataGrid Data="report.Comments" TItem="IncidentCommentDto">
+                        <Columns>
+                            <RadzenDataGridColumn TItem="IncidentCommentDto" Property="OccurredAtUtc" Title="When" />
+                            <RadzenDataGridColumn TItem="IncidentCommentDto" Property="Message" Title="Message" />
+                        </Columns>
+                    </RadzenDataGrid>
+                </RadzenTabsItem>
+            </Tabs>
+        </RadzenTabs>
+    </RadzenStack>
+}
+
+@code {
+    [Parameter] public long IncidentId { get; set; }
+    private CallReportDto? report;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        report = await Http.GetFromJsonAsync<CallReportDto>($"/api/reports/calls/{IncidentId}");
+    }
+
+    private void DownloadCsv() => Navigation.NavigateTo($"/api/reports/export?incidentId={IncidentId}&reportType=call&format=csv", true);
+    private void DownloadHtml() => Navigation.NavigateTo($"/api/reports/export?incidentId={IncidentId}&reportType=call&format=html", true);
+}

@@ -30,6 +30,11 @@ public class AppDbContext : DbContext
     public DbSet<DeviceAgencyEntity> DeviceAgencies => Set<DeviceAgencyEntity>();
     public DbSet<DeviceSettingEntity> DeviceSettings => Set<DeviceSettingEntity>();
     public DbSet<GlobalSettingEntity> GlobalSettings => Set<GlobalSettingEntity>();
+    public DbSet<StatusNormalizationRuleEntity> StatusNormalizationRules => Set<StatusNormalizationRuleEntity>();
+    public DbSet<SavedReportEntity> SavedReports => Set<SavedReportEntity>();
+    public DbSet<ReportDefinitionEntity> ReportDefinitions => Set<ReportDefinitionEntity>();
+    public DbSet<ReportExecutionEntity> ReportExecutions => Set<ReportExecutionEntity>();
+    public DbSet<ExportJobEntity> ExportJobs => Set<ExportJobEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -186,6 +191,43 @@ public class AppDbContext : DbContext
         {
             entity.HasIndex(x => x.AgencyId).IsUnique();
             entity.Property(x => x.SettingsJson).HasColumnType("nvarchar(max)");
+        });
+
+        modelBuilder.Entity<StatusNormalizationRuleEntity>(entity =>
+        {
+            entity.HasIndex(x => new { x.AgencyId, x.RawCode }).IsUnique();
+            entity.Property(x => x.RawCode).HasMaxLength(64);
+            entity.Property(x => x.NormalizedCode).HasMaxLength(128);
+        });
+        modelBuilder.Entity<SavedReportEntity>(entity =>
+        {
+            entity.HasIndex(x => new { x.AgencyId, x.Name });
+            entity.Property(x => x.Name).HasMaxLength(256);
+            entity.Property(x => x.ReportType).HasMaxLength(64);
+            entity.Property(x => x.ParametersJson).HasColumnType("nvarchar(max)");
+        });
+        modelBuilder.Entity<ReportDefinitionEntity>(entity =>
+        {
+            entity.HasIndex(x => new { x.AgencyId, x.Key }).IsUnique();
+            entity.Property(x => x.Key).HasMaxLength(64);
+            entity.Property(x => x.Name).HasMaxLength(256);
+            entity.Property(x => x.Description).HasColumnType("nvarchar(max)");
+            entity.Property(x => x.DefaultParametersJson).HasColumnType("nvarchar(max)");
+        });
+        modelBuilder.Entity<ReportExecutionEntity>(entity =>
+        {
+            entity.HasIndex(x => new { x.AgencyId, x.ExecutedAtUtc });
+            entity.Property(x => x.ReportType).HasMaxLength(64);
+            entity.Property(x => x.ParametersJson).HasColumnType("nvarchar(max)");
+            entity.Property(x => x.ResultSummaryJson).HasColumnType("nvarchar(max)");
+        });
+        modelBuilder.Entity<ExportJobEntity>(entity =>
+        {
+            entity.HasIndex(x => new { x.AgencyId, x.CreatedAtUtc });
+            entity.Property(x => x.Format).HasMaxLength(32);
+            entity.Property(x => x.FileName).HasMaxLength(260);
+            entity.Property(x => x.ContentType).HasMaxLength(128);
+            entity.Property(x => x.PayloadText).HasColumnType("nvarchar(max)");
         });
 
         modelBuilder.Entity<SourceSystemEntity>().HasIndex(x => x.Code).IsUnique();

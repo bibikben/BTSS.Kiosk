@@ -1,0 +1,40 @@
+@page "/reports/pivot/{IncidentId:long}"
+@using BTSS.IAR.Web.Models
+@inject HttpClient Http
+
+<PageTitle>Pivot</PageTitle>
+
+<RadzenStack Gap="1rem">
+    <RadzenText TextStyle="TextStyle.DisplayH5">Pivot Dataset</RadzenText>
+    @if (rows is null)
+    {
+        <RadzenText>Loading...</RadzenText>
+    }
+    else
+    {
+        <RadzenDataGrid Data="rows" TItem="PivotRowDto" AllowPaging="true" PageSize="25">
+            <Columns>
+                <RadzenDataGridColumn TItem="PivotRowDto" Property="UnitIdentifier" Title="Unit" />
+                <RadzenDataGridColumn TItem="PivotRowDto" Property="DispatchedAtUtc" Title="Dispatched" />
+                <RadzenDataGridColumn TItem="PivotRowDto" Property="EnrouteAtUtc" Title="Enroute" />
+                <RadzenDataGridColumn TItem="PivotRowDto" Property="ArrivedAtUtc" Title="Arrived" />
+                <RadzenDataGridColumn TItem="PivotRowDto" Property="TransportBeginAtUtc" Title="Transport Begin" />
+                <RadzenDataGridColumn TItem="PivotRowDto" Property="TransportCompleteAtUtc" Title="Transport Complete" />
+                <RadzenDataGridColumn TItem="PivotRowDto" Property="ClearedAtUtc" Title="Cleared" />
+                <RadzenDataGridColumn TItem="PivotRowDto" Property="InQuartersAtUtc" Title="In Quarters" />
+                <RadzenDataGridColumn TItem="PivotRowDto" Property="DispatchToClearMinutes" Title="Dispatch→Clear (min)" />
+            </Columns>
+        </RadzenDataGrid>
+    }
+</RadzenStack>
+
+@code {
+    [Parameter] public long IncidentId { get; set; }
+    private PivotRowDto[]? rows;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var response = await Http.GetFromJsonAsync<PivotResponse>($"/api/reports/calls/{IncidentId}/pivot");
+        rows = response?.Rows ?? Array.Empty<PivotRowDto>();
+    }
+}
