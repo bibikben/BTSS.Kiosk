@@ -2,7 +2,9 @@
   <Project Path="BTSS.IAR.Api/BTSS.IAR.Api.csproj" />
   <Project Path="BTSS.IAR.Kiosk/BTSS.IAR.Kiosk.csproj" />
   <Project Path="BTSS.IAR.Record/BTSS.IAR.Record.csproj" />
+  <Project Path="BTSS.IAR.Web/BTSS.IAR.Web.csproj" />
+  <Project Path="BTSS.IAR/BTSS.IAR.csproj" />
+  <Project Path="BTSS.Installer/BTSS.Installer.csproj" />
   <Project Path="BTSS.IntegrationTests/BTSS.IntegrationTests.csproj" />
   <Project Path="BTSS.Service/BTSS.Service.csproj" />
-  <Project Path="BTSS.IAR/BTSS.IAR.csproj" />
 </Solution>
