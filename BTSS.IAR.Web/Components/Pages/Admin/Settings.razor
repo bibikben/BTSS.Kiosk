@@ -1,17 +1,124 @@
 @page "/admin/settings"
+@using System.Text.Json.Nodes
 @inject HttpClient Http
 
 <PageTitle>Settings</PageTitle>
 
 <RadzenStack Gap="1rem">
     <RadzenText TextStyle="TextStyle.H5">Agency settings</RadzenText>
+    <RadzenText TextStyle="TextStyle.Body2">Epic 6 adds guided printer and storage defaults while still allowing direct JSON editing.</RadzenText>
+
+    <RadzenRow Gap="1rem">
+        <RadzenColumn Size="12" SizeMD="6">
+            <RadzenStack Gap="0.5rem">
+                <RadzenText TextStyle="TextStyle.Subtitle1">Display defaults</RadzenText>
+                <RadzenTextBox @bind-Value="startupUrl" Placeholder="Startup URL" Style="width:100%" />
+                <RadzenNumeric @bind-Value="monitorIndex" Placeholder="Monitor index" Style="width:100%" />
+                <RadzenNumeric @bind-Value="refreshSeconds" Placeholder="Refresh seconds" Style="width:100%" />
+            </RadzenStack>
+        </RadzenColumn>
+        <RadzenColumn Size="12" SizeMD="6">
+            <RadzenStack Gap="0.5rem">
+                <RadzenText TextStyle="TextStyle.Subtitle1">Printer and storage defaults</RadzenText>
+                <RadzenTextBox @bind-Value="defaultPrinterName" Placeholder="Default printer name" Style="width:100%" />
+                <RadzenTextBox @bind-Value="exportFolder" Placeholder="Export folder" Style="width:100%" />
+                <RadzenTextBox @bind-Value="templateFolder" Placeholder="Template folder" Style="width:100%" />
+            </RadzenStack>
+        </RadzenColumn>
+    </RadzenRow>
+
+    <RadzenStack Orientation="Orientation.Horizontal" Gap="0.5rem">
+        <RadzenButton Text="Apply guided fields to JSON" Click="ApplyGuidedFields" />
+        <RadzenButton Text="Save" ButtonStyle="ButtonStyle.Primary" Click="SaveAsync" />
+    </RadzenStack>
+
+    @if (!string.IsNullOrWhiteSpace(status))
+    {
+        <RadzenAlert AlertStyle="@(saveOk ? AlertStyle.Success : AlertStyle.Warning)" ShowIcon="true">@status</RadzenAlert>
+    }
+
     <RadzenTextArea @bind-Value="json" Style="width:100%; min-height: 360px" />
-    <RadzenButton Text="Save" ButtonStyle="ButtonStyle.Primary" Click="SaveAsync" />
 </RadzenStack>
 
 @code {
     private SettingsEnvelopeDto? settings;
     private string json = "{}";
-    protected override async Task OnInitializedAsync() { settings = await Http.GetFromJsonAsync<SettingsEnvelopeDto>("/admin/settings"); json = settings?.Settings.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) ?? "{}"; }
-    private async Task SaveAsync() { var parsed = System.Text.Json.Nodes.JsonNode.Parse(json) as System.Text.Json.Nodes.JsonObject ?? new(); settings ??= new SettingsEnvelopeDto(0, parsed, null); var req = new SettingsEnvelopeDto(settings.AgencyId, parsed, settings.UpdatedAtUtc); var resp = await Http.PutAsJsonAsync("/admin/settings", req); if (resp.IsSuccessStatusCode) settings = await resp.Content.ReadFromJsonAsync<SettingsEnvelopeDto>(); }
+    private string? startupUrl;
+    private int? monitorIndex;
+    private int? refreshSeconds;
+    private string? defaultPrinterName;
+    private string? exportFolder;
+    private string? templateFolder;
+    private string? status;
+    private bool saveOk;
+
+    protected override async Task OnInitializedAsync()
+    {
+        settings = await Http.GetFromJsonAsync<SettingsEnvelopeDto>("/admin/settings");
+        json = settings?.Settings.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) ?? "{}";
+        LoadGuidedFields();
+    }
+
+    private void LoadGuidedFields()
+    {
+        var parsed = JsonNode.Parse(json) as JsonObject ?? new();
+        startupUrl = parsed["startupUrl"]?.GetValue<string?>();
+        monitorIndex = parsed["selectedMonitorIndex"]?.GetValue<int?>();
+        refreshSeconds = parsed["refreshSeconds"]?.GetValue<int?>();
+        defaultPrinterName = parsed["defaultPrinterName"]?.GetValue<string?>();
+        exportFolder = parsed["exportFolder"]?.GetValue<string?>();
+        templateFolder = parsed["templateFolder"]?.GetValue<string?>();
+    }
+
+    private void ApplyGuidedFields()
+    {
+        var parsed = JsonNode.Parse(json) as JsonObject ?? new();
+        SetOrRemove(parsed, "startupUrl", startupUrl);
+        SetOrRemove(parsed, "defaultPrinterName", defaultPrinterName);
+        SetOrRemove(parsed, "exportFolder", exportFolder);
+        SetOrRemove(parsed, "templateFolder", templateFolder);
+        SetOrRemove(parsed, "selectedMonitorIndex", monitorIndex);
+        SetOrRemove(parsed, "refreshSeconds", refreshSeconds);
+        json = parsed.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        status = "Guided fields applied to the JSON editor.";
+        saveOk = true;
+    }
+
+    private static void SetOrRemove(JsonObject obj, string key, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) obj.Remove(key); else obj[key] = value.Trim();
+    }
+
+    private static void SetOrRemove(JsonObject obj, string key, int? value)
+    {
+        if (value.HasValue) obj[key] = value.Value; else obj.Remove(key);
+    }
+
+    private async Task SaveAsync()
+    {
+        try
+        {
+            var parsed = JsonNode.Parse(json) as JsonObject ?? new();
+            settings ??= new SettingsEnvelopeDto(0, parsed, null);
+            var req = new SettingsEnvelopeDto(settings.AgencyId, parsed, settings.UpdatedAtUtc);
+            var resp = await Http.PutAsJsonAsync("/admin/settings", req);
+            if (!resp.IsSuccessStatusCode)
+            {
+                saveOk = false;
+                status = $"Save failed: {(int)resp.StatusCode} {resp.ReasonPhrase}";
+                return;
+            }
+
+            settings = await resp.Content.ReadFromJsonAsync<SettingsEnvelopeDto>();
+            json = settings?.Settings.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) ?? "{}";
+            LoadGuidedFields();
+            saveOk = true;
+            status = "Agency settings saved.";
+        }
+        catch (Exception ex)
+        {
+            saveOk = false;
+            status = ex.Message;
+        }
+    }
 }

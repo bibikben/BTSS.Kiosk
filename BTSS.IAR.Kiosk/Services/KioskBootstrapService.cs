@@ -76,7 +76,10 @@ internal sealed class KioskBootstrapService : IKioskBootstrapService
             {
                 ["selectedMonitorIndex"] = selectedMonitorIndex,
                 ["startupUrl"] = profile.StartupUrl ?? string.Empty,
-                ["displaySource"] = profile.DisplaySource ?? string.Empty
+                ["displaySource"] = profile.DisplaySource ?? string.Empty,
+                ["defaultPrinterName"] = profile.DefaultPrinterName ?? string.Empty,
+                ["exportFolder"] = profile.Metadata is not null && profile.Metadata.TryGetPropertyValue("exportFolder", out var exportFolder) ? exportFolder?.GetValue<string?>() ?? string.Empty : string.Empty,
+                ["templateFolder"] = profile.Metadata is not null && profile.Metadata.TryGetPropertyValue("templateFolder", out var templateFolder) ? templateFolder?.GetValue<string?>() ?? string.Empty : string.Empty
             },
             UpsertRegistration = true,
             Audit = new AuditMetadataDto

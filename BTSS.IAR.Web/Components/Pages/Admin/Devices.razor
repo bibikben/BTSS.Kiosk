@@ -1,19 +1,58 @@
 @page "/admin/devices"
+@using System.Text.Json.Nodes
 @inject HttpClient Http
 
 <PageTitle>Devices</PageTitle>
 
-<RadzenDataGrid Data="devices" TItem="DeviceAdminDto" AllowPaging="true" PageSize="20">
-    <Columns>
-        <RadzenDataGridColumn TItem="DeviceAdminDto" Property="DeviceId" Title="Device" />
-        <RadzenDataGridColumn TItem="DeviceAdminDto" Property="AgencyName" Title="Agency" />
-        <RadzenDataGridColumn TItem="DeviceAdminDto" Property="ClientName" Title="Client" />
-        <RadzenDataGridColumn TItem="DeviceAdminDto" Property="DeviceName" Title="Name" />
-        <RadzenDataGridColumn TItem="DeviceAdminDto" Property="MachineName" Title="Machine" />
-        <RadzenDataGridColumn TItem="DeviceAdminDto" Property="DeviceType" Title="Type" />
-        <RadzenDataGridColumn TItem="DeviceAdminDto" Property="IsEnabled" Title="Enabled" />
-        <RadzenDataGridColumn TItem="DeviceAdminDto" Property="UpdatedAtUtc" Title="Last Sync" />
-    </Columns>
-</RadzenDataGrid>
+<RadzenStack Gap="1rem">
+    <RadzenText TextStyle="TextStyle.H5">Devices</RadzenText>
+    <RadzenText TextStyle="TextStyle.Body2">Epic 6 surfaces the saved printer and storage settings that each kiosk last synced.</RadzenText>
 
-@code { private List<DeviceAdminDto> devices = new(); protected override async Task OnInitializedAsync() => devices = await Http.GetFromJsonAsync<List<DeviceAdminDto>>("/admin/devices") ?? new(); }
+    <RadzenDataGrid Data="devices" TItem="DeviceAdminDto" AllowPaging="true" PageSize="20" RowSelect="OnRowSelect">
+        <Columns>
+            <RadzenDataGridColumn TItem="DeviceAdminDto" Property="DeviceId" Title="Device" />
+            <RadzenDataGridColumn TItem="DeviceAdminDto" Property="AgencyName" Title="Agency" />
+            <RadzenDataGridColumn TItem="DeviceAdminDto" Property="ClientName" Title="Client" />
+            <RadzenDataGridColumn TItem="DeviceAdminDto" Property="DeviceName" Title="Name" />
+            <RadzenDataGridColumn TItem="DeviceAdminDto" Property="MachineName" Title="Machine" />
+            <RadzenDataGridColumn TItem="DeviceAdminDto" Property="DeviceType" Title="Type" />
+            <RadzenDataGridColumn TItem="DeviceAdminDto" Title="Printer">
+                <Template Context="item">@Read(item.Settings, "defaultPrinterName")</Template>
+            </RadzenDataGridColumn>
+            <RadzenDataGridColumn TItem="DeviceAdminDto" Title="Export Folder">
+                <Template Context="item">@Read(item.Settings, "exportFolder")</Template>
+            </RadzenDataGridColumn>
+            <RadzenDataGridColumn TItem="DeviceAdminDto" Property="IsEnabled" Title="Enabled" />
+            <RadzenDataGridColumn TItem="DeviceAdminDto" Property="UpdatedAtUtc" Title="Last Sync" />
+        </Columns>
+    </RadzenDataGrid>
+
+    @if (selected is not null)
+    {
+        <RadzenCard>
+            <RadzenStack Gap="0.5rem">
+                <RadzenText TextStyle="TextStyle.Subtitle1">Selected device settings</RadzenText>
+                <RadzenText><b>Device:</b> @selected.DeviceId</RadzenText>
+                <RadzenText><b>Printer:</b> @Read(selected.Settings, "defaultPrinterName")</RadzenText>
+                <RadzenText><b>Export folder:</b> @Read(selected.Settings, "exportFolder")</RadzenText>
+                <RadzenText><b>Template folder:</b> @Read(selected.Settings, "templateFolder")</RadzenText>
+                <pre style="white-space:pre-wrap">@(selected.Settings?.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) ?? "{}")</pre>
+            </RadzenStack>
+        </RadzenCard>
+    }
+</RadzenStack>
+
+@code {
+    private List<DeviceAdminDto> devices = new();
+    private DeviceAdminDto? selected;
+
+    protected override async Task OnInitializedAsync()
+        => devices = await Http.GetFromJsonAsync<List<DeviceAdminDto>>("/admin/devices") ?? new();
+
+    private void OnRowSelect(DeviceAdminDto item) => selected = item;
+
+    private static string Read(JsonObject? settings, string key)
+        => settings is not null && settings.TryGetPropertyValue(key, out var value) && value is not null
+            ? value.ToString()
+            : string.Empty;
+}

@@ -70,7 +70,30 @@
                     <Entry x:Name="StartupUrlEntry" Placeholder="Assigned startup URL or display source" />
                     <Label Text="Monitor" />
                     <Picker x:Name="MonitorPicker" Title="Select monitor" />
+
+                    <Label Text="Default printer" />
+                    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                        <Picker x:Name="PrinterPicker" Title="Select printer" Grid.Column="0" />
+                        <Button Text="Print Dialog" Grid.Column="1" Clicked="OnPrinterDialogClicked" />
+                        <Button Text="Test Print" Grid.Column="2" Clicked="OnTestPrintClicked" />
+                    </Grid>
+
+                    <Label Text="Export folder" />
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <Entry x:Name="ExportFolderEntry" Placeholder="Choose export folder" Grid.Column="0" />
+                        <Button Text="Browse" Grid.Column="1" Clicked="OnBrowseExportFolderClicked" />
+                    </Grid>
+
+                    <Label Text="Template folder" />
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <Entry x:Name="TemplateFolderEntry" Placeholder="Choose template folder" Grid.Column="0" />
+                        <Button Text="Browse" Grid.Column="1" Clicked="OnBrowseTemplateFolderClicked" />
+                    </Grid>
+
+                    <Label x:Name="StorageValidationLabel" FontSize="12" Opacity="0.85" />
+
                     <HorizontalStackLayout Spacing="10">
+                        <Button Text="Validate Local Settings" Clicked="OnValidateStorageClicked" />
                         <Button Text="Use Assigned Display" Clicked="OnUseAssignedClicked" />
                         <Button Text="Register / Update Device" Clicked="OnRegisterClicked" />
                         <Button Text="Refresh Configuration" Clicked="OnRefreshClicked" />

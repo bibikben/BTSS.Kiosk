@@ -21,6 +21,8 @@ public static class AppSettings
     private const string KioskStationCodeKey = "settings.kiosk.stationcode";
     private const string KioskStationNameKey = "settings.kiosk.stationname";
     public const string DefaultPrinterNameKey = "default_printer_name";
+    private const string ExportFolderKey = "settings.paths.exportfolder";
+    private const string TemplateFolderKey = "settings.paths.templatefolder";
     public static bool AutoStartAtLogin
     {
         get => Preferences.Get(AutoStartAtLoginKey, false);
@@ -42,6 +44,18 @@ public static class AppSettings
     {
         get => Preferences.Get(DefaultPrinterNameKey, (string?)null);
         set => Preferences.Set(DefaultPrinterNameKey, value);
+    }
+
+    public static string? ExportFolder
+    {
+        get => Preferences.Get(ExportFolderKey, (string?)null);
+        set => Preferences.Set(ExportFolderKey, value);
+    }
+
+    public static string? TemplateFolder
+    {
+        get => Preferences.Get(TemplateFolderKey, (string?)null);
+        set => Preferences.Set(TemplateFolderKey, value);
     }
     /// <summary>
     /// -1 means not selected.

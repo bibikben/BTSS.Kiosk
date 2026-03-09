@@ -51,6 +51,10 @@ namespace BTSS.IAR.Kiosk
             builder.Services.AddSingleton<IarTokenProvider>();
             builder.Services.AddSingleton<IKioskBootstrapService, KioskBootstrapService>();
             builder.Services.AddSingleton<KioskAdminAuthService>();
+#if WINDOWS
+            builder.Services.AddSingleton<ILocalPrinterService, PrinterService>();
+            builder.Services.AddSingleton<IFolderPickerService, FolderPickerService>();
+#endif
 
 #if WINDOWS
             builder.ConfigureMauiHandlers(handlers =>

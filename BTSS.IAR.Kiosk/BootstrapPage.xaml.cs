@@ -2,6 +2,7 @@ using BTSS.IAR.Kiosk.Services;
 
 #if WINDOWS
 using BTSS.IAR.Kiosk.Platforms.Windows;
+using BTSS.IAR.Kiosk.Platforms.Windows.Services;
 #endif
 
 namespace BTSS.IAR.Kiosk;
@@ -43,9 +44,13 @@ public partial class BootstrapPage : ContentPage
         StationCodeEntry.Text = AppSettings.KioskStationCode;
         StationNameEntry.Text = AppSettings.KioskStationName;
         StartupUrlEntry.Text = AppSettings.SavedUrl;
+        ExportFolderEntry.Text = AppSettings.ExportFolder;
+        TemplateFolderEntry.Text = AppSettings.TemplateFolder;
         AdminUserNameEntry.Text = _lastLoginUserName ?? "superadmin";
 
         LoadMonitors();
+        LoadPrinters();
+        ValidateLocalSettings(showSuccessState: false);
         SetAdminMode(AdminAuth.HasAdminSession);
         UpdateAdminSummary();
         if (_adminMode)
@@ -55,6 +60,71 @@ public partial class BootstrapPage : ContentPage
         else
         {
             StatusLabel.Text = "Standard runtime mode is active. Enter admin mode to view device pairing and diagnostics.";
+        }
+    }
+
+
+    private ILocalPrinterService? LocalPrinterService => Handler?.MauiContext?.Services.GetService<ILocalPrinterService>();
+    private IFolderPickerService? FolderPickerService => Handler?.MauiContext?.Services.GetService<IFolderPickerService>();
+    private string? SelectedPrinterName => PrinterPicker.SelectedIndex >= 0 && PrinterPicker.ItemsSource is IList<string> items && PrinterPicker.SelectedIndex < items.Count
+        ? items[PrinterPicker.SelectedIndex]
+        : null;
+
+    private void LoadPrinters()
+    {
+        var service = LocalPrinterService;
+        var printers = service?.GetInstalledPrinters().ToList() ?? new List<string>();
+        PrinterPicker.ItemsSource = printers;
+
+        var preferred = AppSettings.DefaultPrinterName;
+        if (string.IsNullOrWhiteSpace(preferred))
+            preferred = service?.GetSystemDefaultPrinter();
+
+        var index = !string.IsNullOrWhiteSpace(preferred)
+            ? printers.FindIndex(x => string.Equals(x, preferred, StringComparison.OrdinalIgnoreCase))
+            : -1;
+
+        PrinterPicker.SelectedIndex = index >= 0 ? index : (printers.Count > 0 ? 0 : -1);
+    }
+
+    private bool ValidateLocalSettings(bool showSuccessState)
+    {
+        var problems = new List<string>();
+        var printerService = LocalPrinterService;
+        var printerName = SelectedPrinterName ?? AppSettings.DefaultPrinterName;
+        if (!string.IsNullOrWhiteSpace(printerName) && !(printerService?.PrinterExists(printerName) ?? false))
+            problems.Add($"Printer not found: {printerName}");
+
+        ValidateFolder(ExportFolderEntry.Text, "Export folder", problems);
+        ValidateFolder(TemplateFolderEntry.Text, "Template folder", problems);
+
+        if (problems.Count == 0)
+        {
+            StorageValidationLabel.TextColor = Colors.DarkGreen;
+            StorageValidationLabel.Text = showSuccessState
+                ? "Local printer and storage settings look valid."
+                : "Choose a printer and optional folders for exports/templates.";
+            return true;
+        }
+
+        StorageValidationLabel.TextColor = Colors.DarkRed;
+        StorageValidationLabel.Text = string.Join(Environment.NewLine, problems);
+        return false;
+    }
+
+    private static void ValidateFolder(string? path, string label, List<string> problems)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return;
+
+        try
+        {
+            if (!Directory.Exists(path))
+                problems.Add($"{label} does not exist: {path}");
+        }
+        catch (Exception ex)
+        {
+            problems.Add($"{label} is invalid: {ex.Message}");
         }
     }
 
@@ -86,9 +156,15 @@ public partial class BootstrapPage : ContentPage
         AppSettings.KioskStationCode = (StationCodeEntry.Text ?? string.Empty).Trim();
         AppSettings.KioskStationName = (StationNameEntry.Text ?? string.Empty).Trim();
         AppSettings.SavedUrl = (StartupUrlEntry.Text ?? string.Empty).Trim();
+        AppSettings.DefaultPrinterName = SelectedPrinterName;
+        AppSettings.ExportFolder = NormalizeOptionalPath(ExportFolderEntry.Text);
+        AppSettings.TemplateFolder = NormalizeOptionalPath(TemplateFolderEntry.Text);
         AppSettings.SelectedMonitorIndex = Math.Max(0, MonitorPicker.SelectedIndex);
         BootstrapCompatibilityStore.Save();
     }
+
+    private string? NormalizeOptionalPath(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private async Task LoadExistingConfigurationAsync()
     {
@@ -133,12 +209,35 @@ public partial class BootstrapPage : ContentPage
         StationCodeEntry.Text = config.Profile?.StationCode ?? StationCodeEntry.Text;
         StationNameEntry.Text = config.Profile?.StationName ?? StationNameEntry.Text;
         StartupUrlEntry.Text = config.ResolveStartupUrl() ?? StartupUrlEntry.Text;
+        var printerName = config.Profile?.DefaultPrinterName
+            ?? TryReadString(config.DeviceSettings, "defaultPrinterName")
+            ?? TryReadString(config.GlobalSettings, "defaultPrinterName");
+        if (!string.IsNullOrWhiteSpace(printerName) && PrinterPicker.ItemsSource is IList<string> printers)
+        {
+            var printerIndex = printers.IndexOf(printers.FirstOrDefault(x => string.Equals(x, printerName, StringComparison.OrdinalIgnoreCase)) ?? string.Empty);
+            if (printerIndex >= 0) PrinterPicker.SelectedIndex = printerIndex;
+        }
+
+        ExportFolderEntry.Text = TryReadString(config.DeviceSettings, "exportFolder")
+            ?? TryReadString(config.GlobalSettings, "exportFolder")
+            ?? ExportFolderEntry.Text;
+        TemplateFolderEntry.Text = TryReadString(config.DeviceSettings, "templateFolder")
+            ?? TryReadString(config.GlobalSettings, "templateFolder")
+            ?? TemplateFolderEntry.Text;
 
         var monitorIndex = config.ResolveMonitorIndex();
         if (monitorIndex.HasValue && monitorIndex.Value >= 0 && monitorIndex.Value < _monitorLabels.Count)
             MonitorPicker.SelectedIndex = monitorIndex.Value;
 
         PersistApiSettings();
+        ValidateLocalSettings(showSuccessState: false);
+    }
+
+    private static string? TryReadString(System.Text.Json.Nodes.JsonObject? source, string key)
+    {
+        if (source is null || !source.TryGetPropertyValue(key, out var value) || value is null)
+            return null;
+        return value.GetValue<string?>();
     }
 
     private void SetAdminMode(bool enabled)
@@ -175,7 +274,10 @@ public partial class BootstrapPage : ContentPage
             $"Saved API base URL: {AppSettings.IarApiBaseUrl}",
             $"Saved client ID: {AppSettings.IarApiClientId}",
             $"Saved startup URL: {AppSettings.SavedUrl}",
-            $"Selected monitor index: {AppSettings.SelectedMonitorIndex}"
+            $"Selected monitor index: {AppSettings.SelectedMonitorIndex}",
+            $"Saved default printer: {AppSettings.DefaultPrinterName}",
+            $"Saved export folder: {AppSettings.ExportFolder}",
+            $"Saved template folder: {AppSettings.TemplateFolder}"
         };
 
         var session = AdminAuth.CurrentSession;
@@ -369,6 +471,12 @@ public partial class BootstrapPage : ContentPage
         try
         {
             PersistApiSettings();
+            if (!ValidateLocalSettings(showSuccessState: true))
+            {
+                await DisplayAlert("Invalid local settings", "Correct the local printer or folder settings before registering this device.", "OK");
+                return;
+            }
+
             var profile = new DeviceProfileDto
             {
                 DisplayName = string.IsNullOrWhiteSpace(DisplayNameEntry.Text) ? Environment.MachineName : DisplayNameEntry.Text.Trim(),
@@ -377,7 +485,13 @@ public partial class BootstrapPage : ContentPage
                 StationName = string.IsNullOrWhiteSpace(StationNameEntry.Text) ? null : StationNameEntry.Text.Trim(),
                 StartupUrl = StartupUrlEntry.Text.Trim(),
                 DisplaySource = StartupUrlEntry.Text.Trim(),
-                Enabled = true
+                DefaultPrinterName = SelectedPrinterName,
+                Enabled = true,
+                Metadata = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["exportFolder"] = NormalizeOptionalPath(ExportFolderEntry.Text),
+                    ["templateFolder"] = NormalizeOptionalPath(TemplateFolderEntry.Text)
+                }
             };
 
             var config = await Bootstrap.RegisterDeviceAsync(profile, Math.Max(0, MonitorPicker.SelectedIndex));
@@ -418,4 +532,73 @@ public partial class BootstrapPage : ContentPage
         StatusLabel.Text = "Saved API settings cleared for this device.";
         await DisplayAlert("Cleared", "Saved API settings were removed for this kiosk.", "OK");
     }
+
+    private async void OnPrinterDialogClicked(object sender, EventArgs e)
+    {
+#if WINDOWS
+        var selected = LocalPrinterService?.ShowPrinterPicker(SelectedPrinterName ?? AppSettings.DefaultPrinterName);
+        if (!string.IsNullOrWhiteSpace(selected) && PrinterPicker.ItemsSource is IList<string> printers)
+        {
+            var index = printers.IndexOf(printers.FirstOrDefault(x => string.Equals(x, selected, StringComparison.OrdinalIgnoreCase)) ?? string.Empty);
+            if (index >= 0)
+                PrinterPicker.SelectedIndex = index;
+            PersistApiSettings();
+            ValidateLocalSettings(showSuccessState: false);
+        }
+#else
+        await DisplayAlert("Unavailable", "Printer dialog is only available on Windows.", "OK");
+#endif
+    }
+
+    private async void OnTestPrintClicked(object sender, EventArgs e)
+    {
+        var printer = SelectedPrinterName;
+        if (string.IsNullOrWhiteSpace(printer))
+        {
+            await DisplayAlert("No printer selected", "Choose a local printer first.", "OK");
+            return;
+        }
+
+        try
+        {
+            await (LocalPrinterService?.PrintTestPageAsync(printer, "BTSS kiosk test print") ?? Task.CompletedTask);
+            PersistApiSettings();
+            ValidateLocalSettings(showSuccessState: true);
+            await DisplayAlert("Printed", $"A test page was sent to {printer}.", "OK");
+        }
+        catch (Exception ex)
+        {
+            await DisplayAlert("Print failed", ex.Message, "OK");
+        }
+    }
+
+    private async void OnBrowseExportFolderClicked(object sender, EventArgs e)
+    {
+        var selected = await (FolderPickerService?.PickFolderAsync(ExportFolderEntry.Text) ?? Task.FromResult<string?>(null));
+        if (!string.IsNullOrWhiteSpace(selected))
+        {
+            ExportFolderEntry.Text = selected;
+            PersistApiSettings();
+            ValidateLocalSettings(showSuccessState: false);
+        }
+    }
+
+    private async void OnBrowseTemplateFolderClicked(object sender, EventArgs e)
+    {
+        var selected = await (FolderPickerService?.PickFolderAsync(TemplateFolderEntry.Text) ?? Task.FromResult<string?>(null));
+        if (!string.IsNullOrWhiteSpace(selected))
+        {
+            TemplateFolderEntry.Text = selected;
+            PersistApiSettings();
+            ValidateLocalSettings(showSuccessState: false);
+        }
+    }
+
+    private async void OnValidateStorageClicked(object sender, EventArgs e)
+    {
+        PersistApiSettings();
+        var ok = ValidateLocalSettings(showSuccessState: true);
+        await DisplayAlert(ok ? "Validation passed" : "Validation issues found", StorageValidationLabel.Text ?? string.Empty, "OK");
+    }
+
 }
