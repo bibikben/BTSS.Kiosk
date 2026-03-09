@@ -33,6 +33,8 @@ public static class PermissionCatalog
     public const string AdminSettings = "admin.settings";
     public const string AdminApiClients = "admin.api-clients";
     public const string AdminDiagnostics = "admin.diagnostics";
+    public const string ReportRun = "report.run";
+    public const string ReportDesign = "report.design";
     public const string KioskAdmin = "kiosk.admin";
 
     public static readonly (string Code, string Description)[] All =
@@ -44,6 +46,8 @@ public static class PermissionCatalog
         (AdminSettings, "Manage global and per-device settings."),
         (AdminApiClients, "Manage API clients and machine credentials."),
         (AdminDiagnostics, "View diagnostics and operational state."),
+        (ReportRun, "Run agency-scoped reporting queries and saved reports."),
+        (ReportDesign, "Create, edit, and share reporting definitions."),
         (KioskAdmin, "Access kiosk admin/setup mode.")
     };
 }
@@ -97,12 +101,15 @@ public sealed class HumanAuthService
             PermissionCatalog.AdminSettings,
             PermissionCatalog.AdminApiClients,
             PermissionCatalog.AdminDiagnostics,
+            PermissionCatalog.ReportRun,
+            PermissionCatalog.ReportDesign,
             PermissionCatalog.KioskAdmin,
             ct);
         await GrantRolePermissionsAsync(roles[RoleCatalog.KioskAdmin].Id,
             PermissionCatalog.KioskAdmin,
             PermissionCatalog.AdminDevices,
             PermissionCatalog.AdminDiagnostics,
+            PermissionCatalog.ReportRun,
             ct);
 
         if (!await _db.Users.AnyAsync(ct))

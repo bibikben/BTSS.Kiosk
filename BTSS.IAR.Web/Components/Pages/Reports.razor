@@ -1,5 +1,4 @@
 @page "/reports"
-@using BTSS.IAR.Web.Models
 @inject HttpClient Http
 
 <PageTitle>Reports</PageTitle>
@@ -8,7 +7,7 @@
     <RadzenRow AlignItems="AlignItems.Center">
         <RadzenColumn Size="12" SizeMD="8">
             <RadzenText TextStyle="TextStyle.DisplayH5">Reports</RadzenText>
-            <RadzenText TextStyle="TextStyle.Body1">Agency-safe call reporting, normalized statuses, and pivot datasets.</RadzenText>
+            <RadzenText TextStyle="TextStyle.Body1">Incidents, units, timelines, comments, and diagnostics subject areas with agency filters applied automatically.</RadzenText>
         </RadzenColumn>
         <RadzenColumn Size="12" SizeMD="4">
             <RadzenStack Orientation="Orientation.Horizontal" Gap="0.5rem" JustifyContent="JustifyContent.End">
@@ -19,64 +18,32 @@
     </RadzenRow>
 
     <RadzenCard>
-        <RadzenRow Gap="1rem">
-            <RadzenColumn Size="12" SizeLG="4">
-                <RadzenTextBox @bind-Value="statusFilter" Placeholder="Status filter" Style="width:100%" />
-            </RadzenColumn>
-            <RadzenColumn Size="12" SizeLG="3">
-                <RadzenCheckBox @bind-Value="closedOnly" TValue="bool" /> <RadzenLabel Text="Closed only" />
-            </RadzenColumn>
-            <RadzenColumn Size="12" SizeLG="3">
-                <RadzenNumeric @bind-Value="take" TValue="int" Min="1" Max="200" Style="width:100%" />
-            </RadzenColumn>
-            <RadzenColumn Size="12" SizeLG="2">
-                <RadzenButton Text="Refresh" Click="LoadAsync" Style="width:100%" />
-            </RadzenColumn>
-        </RadzenRow>
-    </RadzenCard>
-
-    <RadzenCard>
-        @if (items is null)
+        @if (model is null)
         {
             <RadzenText>Loading...</RadzenText>
         }
         else
         {
-            <RadzenDataGrid Data="items" TItem="IncidentListItemDto" AllowPaging="true" PageSize="20">
-                <Columns>
-                    <RadzenDataGridColumn TItem="IncidentListItemDto" Property="ExternalIncidentId" Title="Incident" />
-                    <RadzenDataGridColumn TItem="IncidentListItemDto" Property="Type" Title="Type" />
-                    <RadzenDataGridColumn TItem="IncidentListItemDto" Property="Priority" Title="Priority" />
-                    <RadzenDataGridColumn TItem="IncidentListItemDto" Property="Address" Title="Address" />
-                    <RadzenDataGridColumn TItem="IncidentListItemDto" Property="Status" Title="Status" />
-                    <RadzenDataGridColumn TItem="IncidentListItemDto" Title="Actions">
-                        <Template Context="row">
-                            <RadzenStack Orientation="Orientation.Horizontal" Gap="0.5rem">
-                                <RadzenButton Text="Detail" Path="@($"/reports/calls/{row.Id}")" Size="ButtonSize.Small" />
-                                <RadzenButton Text="Pivot" Path="@($"/reports/pivot/{row.Id}")" Size="ButtonSize.Small" ButtonStyle="ButtonStyle.Secondary" />
+            <RadzenText TextStyle="TextStyle.Subtitle1">Active agency: @model.AgencyName</RadzenText>
+            <RadzenRow Gap="1rem">
+                @foreach (var area in model.SubjectAreas)
+                {
+                    <RadzenColumn Size="12" SizeMD="6" SizeLG="4">
+                        <RadzenCard Variant="Variant.Outlined">
+                            <RadzenStack Gap="0.5rem">
+                                <RadzenText TextStyle="TextStyle.H6">@area.Name</RadzenText>
+                                <RadzenText>@area.Description</RadzenText>
+                                <RadzenText TextStyle="TextStyle.Caption">Fields: @string.Join(", ", area.Fields.Select(x => x.Label))</RadzenText>
                             </RadzenStack>
-                        </Template>
-                    </RadzenDataGridColumn>
-                </Columns>
-            </RadzenDataGrid>
+                        </RadzenCard>
+                    </RadzenColumn>
+                }
+            </RadzenRow>
         }
     </RadzenCard>
 </RadzenStack>
 
 @code {
-    private IncidentListItemDto[]? items;
-    private string? statusFilter;
-    private bool closedOnly;
-    private int take = 50;
-
-    protected override async Task OnInitializedAsync() => await LoadAsync();
-
-    private async Task LoadAsync()
-    {
-        var query = $"/api/reports/calls?take={take}&closed={closedOnly.ToString().ToLowerInvariant()}";
-        if (!string.IsNullOrWhiteSpace(statusFilter))
-            query += $"&status={Uri.EscapeDataString(statusFilter)}";
-        var response = await Http.GetFromJsonAsync<ReportCallListResponse>(query);
-        items = response?.Items ?? Array.Empty<IncidentListItemDto>();
-    }
+    private ReportingModelDto? model;
+    protected override async Task OnInitializedAsync() => model = await Http.GetFromJsonAsync<ReportingModelDto>("/api/reporting/model");
 }

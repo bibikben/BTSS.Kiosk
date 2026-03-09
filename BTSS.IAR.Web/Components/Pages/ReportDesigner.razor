@@ -1,34 +1,242 @@
+@using System.Text.Json
 @page "/reports/designer"
 @inject HttpClient Http
 
 <PageTitle>Report Designer</PageTitle>
 
 <RadzenStack Gap="1rem">
-    <RadzenText TextStyle="TextStyle.DisplayH5">Report Designer</RadzenText>
-    <RadzenText>Use the built-in report definitions and save parameterized report presets for the current agency.</RadzenText>
+    <RadzenRow AlignItems="AlignItems.Center">
+        <RadzenColumn Size="12" SizeMD="8">
+            <RadzenText TextStyle="TextStyle.DisplayH5">Report Designer</RadzenText>
+            <RadzenText TextStyle="TextStyle.Body1">Agency-scoped ad hoc reporting with saved report definitions.</RadzenText>
+        </RadzenColumn>
+        <RadzenColumn Size="12" SizeMD="4">
+            <RadzenStack Orientation="Orientation.Horizontal" Gap="0.5rem" JustifyContent="JustifyContent.End">
+                <RadzenButton Text="Preview" Icon="preview" Click="PreviewAsync" Disabled="@(selectedSubject is null)" />
+                <RadzenButton Text="Run" Icon="play_arrow" ButtonStyle="ButtonStyle.Secondary" Click="RunAsync" Disabled="@(selectedSubject is null)" />
+                <RadzenButton Text="Save" Icon="save" ButtonStyle="ButtonStyle.Success" Click="SaveAsync" Disabled="@(!canSave)" />
+            </RadzenStack>
+        </RadzenColumn>
+    </RadzenRow>
+
+    @if (!string.IsNullOrWhiteSpace(errorText))
+    {
+        <RadzenAlert AlertStyle="AlertStyle.Danger">@errorText</RadzenAlert>
+    }
+
     <RadzenCard>
-        @if (definitions is null)
+        @if (model is null)
         {
-            <RadzenText>Loading...</RadzenText>
+            <RadzenText>Loading reporting model...</RadzenText>
         }
         else
         {
-            <RadzenDataGrid Data="definitions" TItem="ReportDefinitionDto">
-                <Columns>
-                    <RadzenDataGridColumn TItem="ReportDefinitionDto" Property="Key" Title="Key" />
-                    <RadzenDataGridColumn TItem="ReportDefinitionDto" Property="Name" Title="Name" />
-                    <RadzenDataGridColumn TItem="ReportDefinitionDto" Property="Description" Title="Description" />
-                </Columns>
-            </RadzenDataGrid>
+            <RadzenRow Gap="1rem">
+                <RadzenColumn Size="12" SizeLG="4">
+                    <RadzenStack Gap="0.5rem">
+                        <RadzenText TextStyle="TextStyle.Subtitle1">Subject area</RadzenText>
+                        <RadzenDropDown Data="model.SubjectAreas" TextProperty="Name" ValueProperty="Key" @bind-Value="selectedSubjectKey" Change="OnSubjectChanged" Style="width:100%" />
+                        @if (selectedSubject is not null)
+                        {
+                            <RadzenText>@selectedSubject.Description</RadzenText>
+                        }
+                        <RadzenText TextStyle="TextStyle.Subtitle2">Report name</RadzenText>
+                        <RadzenTextBox @bind-Value="reportName" Style="width:100%" Placeholder="Saved report name" />
+                    </RadzenStack>
+                </RadzenColumn>
+                <RadzenColumn Size="12" SizeLG="4">
+                    <RadzenText TextStyle="TextStyle.Subtitle1">Fields</RadzenText>
+                    @if (selectedSubject is not null)
+                    {
+                        @foreach (var field in selectedSubject.Fields)
+                        {
+                            <div class="rz-mb-2">
+                                <RadzenCheckBox TValue="bool" Value="@selectedFields.Contains(field.Key)" Change="@(args => ToggleField(field.Key, args))" />
+                                <span class="rz-ml-2">@field.Label</span>
+                            </div>
+                        }
+                    }
+                </RadzenColumn>
+                <RadzenColumn Size="12" SizeLG="4">
+                    <RadzenText TextStyle="TextStyle.Subtitle1">Filters</RadzenText>
+                    @if (selectedSubject is not null)
+                    {
+                        @for (var i = 0; i < filters.Count; i++)
+                        {
+                            var idx = i;
+                            <RadzenStack Gap="0.25rem" class="rz-mb-3">
+                                <RadzenDropDown Data="selectedSubject.Fields.Where(x => x.Filterable).ToList()" TextProperty="Label" ValueProperty="Key" @bind-Value="filters[idx].Field" Style="width:100%" />
+                                <RadzenDropDown Data="selectedSubject.SupportedOperators" TextProperty="Label" ValueProperty="Key" @bind-Value="filters[idx].Operator" Style="width:100%" />
+                                <RadzenTextBox @bind-Value="filters[idx].Value" Style="width:100%" Placeholder="Value" />
+                                <RadzenButton Text="Remove" Size="ButtonSize.Small" ButtonStyle="ButtonStyle.Danger" Click="@(() => RemoveFilter(idx))" />
+                            </RadzenStack>
+                        }
+                        <RadzenButton Text="Add filter" Icon="add" Size="ButtonSize.Small" Click="AddFilter" />
+                    }
+                </RadzenColumn>
+            </RadzenRow>
+        }
+    </RadzenCard>
+
+    <RadzenCard>
+        <RadzenStack Orientation="Orientation.Horizontal" Gap="1rem" AlignItems="AlignItems.Center">
+            <RadzenText TextStyle="TextStyle.Subtitle1">Preview</RadzenText>
+            @if (result is not null)
+            {
+                <RadzenBadge Text="@($"{result.ReturnedCount} rows shown / {result.TotalCount} total")" />
+                <RadzenBadge Text="@string.Join(", ", result.AppliedSecurityFilters)" BadgeStyle="BadgeStyle.Secondary" />
+            }
+        </RadzenStack>
+        @if (result is null)
+        {
+            <RadzenText>No preview loaded.</RadzenText>
+        }
+        else
+        {
+            <div style="overflow:auto">
+                <table class="rz-grid-table" style="width:100%">
+                    <thead>
+                        <tr>
+                            @foreach (var field in result.Fields)
+                            {
+                                <th>@field</th>
+                            }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in result.Rows)
+                        {
+                            <tr>
+                                @foreach (var field in result.Fields)
+                                {
+                                    <td>@FormatCell(row.Values, field)</td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
         }
     </RadzenCard>
 </RadzenStack>
 
 @code {
-    private ReportDefinitionDto[]? definitions;
+    private ReportingModelDto? model;
+    private ReportingSubjectAreaDto? selectedSubject;
+    private string? selectedSubjectKey;
+    private readonly List<string> selectedFields = new();
+    private readonly List<FilterEditorRow> filters = new();
+    private ReportingQueryResultDto? result;
+    private string? reportName;
+    private string? errorText;
+    private bool canSave;
 
     protected override async Task OnInitializedAsync()
     {
-        definitions = await Http.GetFromJsonAsync<ReportDefinitionDto[]>("/api/reports/definitions") ?? Array.Empty<ReportDefinitionDto>();
+        model = await Http.GetFromJsonAsync<ReportingModelDto>("/api/reporting/model");
+        canSave = model?.AllowedActions.Contains("save", StringComparer.OrdinalIgnoreCase) ?? false;
+        selectedSubjectKey = model?.SubjectAreas.FirstOrDefault()?.Key;
+        SyncSelectedSubject();
+    }
+
+    private void OnSubjectChanged(object? _)
+    {
+        SyncSelectedSubject();
+    }
+
+    private void SyncSelectedSubject()
+    {
+        selectedSubject = model?.SubjectAreas.FirstOrDefault(x => x.Key == selectedSubjectKey);
+        selectedFields.Clear();
+        if (selectedSubject is not null)
+            selectedFields.AddRange(selectedSubject.Fields.Where(x => x.IsDefault).Select(x => x.Key));
+        filters.Clear();
+        result = null;
+        reportName ??= selectedSubject?.Name;
+    }
+
+    private void ToggleField(string key, object? value)
+    {
+        var isChecked = value is bool flag && flag;
+        if (isChecked)
+        {
+            if (!selectedFields.Contains(key, StringComparer.OrdinalIgnoreCase))
+                selectedFields.Add(key);
+        }
+        else
+        {
+            selectedFields.RemoveAll(x => string.Equals(x, key, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    private void AddFilter()
+    {
+        var firstField = selectedSubject?.Fields.FirstOrDefault(x => x.Filterable)?.Key ?? string.Empty;
+        filters.Add(new FilterEditorRow { Field = firstField, Operator = "eq" });
+    }
+
+    private void RemoveFilter(int index)
+    {
+        if (index >= 0 && index < filters.Count)
+            filters.RemoveAt(index);
+    }
+
+    private async Task PreviewAsync()
+    {
+        await ExecuteAsync("/api/reporting/query/preview");
+    }
+
+    private async Task RunAsync()
+    {
+        await ExecuteAsync("/api/reporting/query/execute");
+    }
+
+    private async Task ExecuteAsync(string url)
+    {
+        errorText = null;
+        var payload = BuildQuery(take: url.EndsWith("preview", StringComparison.OrdinalIgnoreCase) ? 25 : 100);
+        var response = await Http.PostAsJsonAsync(url, payload);
+        if (!response.IsSuccessStatusCode)
+        {
+            errorText = $"Request failed: {(int)response.StatusCode} {response.ReasonPhrase}";
+            return;
+        }
+        result = await response.Content.ReadFromJsonAsync<ReportingQueryResultDto>();
+    }
+
+    private async Task SaveAsync()
+    {
+        errorText = null;
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(BuildQuery(100), new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        var payload = new ReportingSaveReportRequestDto(null, reportName ?? selectedSubject?.Name ?? "Saved report", selectedSubject?.Key ?? "incidents", selectedSubject?.Description, true, doc.RootElement.Clone());
+        var response = await Http.PostAsJsonAsync("/api/reporting/reports", payload);
+        if (!response.IsSuccessStatusCode)
+        {
+            errorText = $"Save failed: {(int)response.StatusCode} {response.ReasonPhrase}";
+            return;
+        }
+        errorText = null;
+    }
+
+    private ReportingQueryRequestDto BuildQuery(int take) =>
+        new(selectedSubject?.Key ?? "incidents", selectedFields.ToArray(), filters.Where(x => !string.IsNullOrWhiteSpace(x.Field) && !string.IsNullOrWhiteSpace(x.Value)).Select(x => new ReportingFilterDto(x.Field!, x.Operator ?? "eq", x.Value)).ToArray(), null, 0, take);
+
+    private static string FormatCell(Dictionary<string, object?> values, string field)
+    {
+        if (!values.TryGetValue(field, out var value) || value is null)
+            return string.Empty;
+        return value switch
+        {
+            DateTime dt => dt.ToLocalTime().ToString("yyyy-MM-dd HH:mm"),
+            DateTimeOffset dto => dto.LocalDateTime.ToString("yyyy-MM-dd HH:mm"),
+            _ => value.ToString() ?? string.Empty
+        };
+    }
+
+    private sealed class FilterEditorRow
+    {
+        public string? Field { get; set; }
+        public string? Operator { get; set; } = "eq";
+        public string? Value { get; set; }
     }
 }

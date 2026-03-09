@@ -5,46 +5,106 @@
 
 <RadzenStack Gap="1rem">
     <RadzenRow AlignItems="AlignItems.Center">
-        <RadzenColumn Size="12" SizeMD="6"><RadzenText TextStyle="TextStyle.DisplayH5">Saved Reports</RadzenText></RadzenColumn>
-        <RadzenColumn Size="12" SizeMD="6">
+        <RadzenColumn Size="12" SizeMD="8">
+            <RadzenText TextStyle="TextStyle.DisplayH5">Saved Reports</RadzenText>
+            <RadzenText TextStyle="TextStyle.Body1">Run agency-scoped saved reporting definitions.</RadzenText>
+        </RadzenColumn>
+        <RadzenColumn Size="12" SizeMD="4">
             <RadzenStack Orientation="Orientation.Horizontal" Gap="0.5rem" JustifyContent="JustifyContent.End">
-                <RadzenTextBox @bind-Value="newName" Placeholder="Report name" Style="width:16rem" />
-                <RadzenTextBox @bind-Value="incidentIdText" Placeholder="Incident Id" Style="width:10rem" />
-                <RadzenButton Text="Save Call Report" Click="SaveAsync" />
+                <RadzenButton Text="Refresh" Icon="refresh" Click="LoadAsync" />
+                <RadzenButton Text="Designer" Path="/reports/designer" ButtonStyle="ButtonStyle.Secondary" />
             </RadzenStack>
         </RadzenColumn>
     </RadzenRow>
 
+    @if (!string.IsNullOrWhiteSpace(errorText))
+    {
+        <RadzenAlert AlertStyle="AlertStyle.Danger">@errorText</RadzenAlert>
+    }
+
     <RadzenCard>
-        <RadzenDataGrid Data="reports" TItem="SavedReportDto">
+        <RadzenDataGrid Data="reports" TItem="ReportingSavedReportDto" AllowPaging="true" PageSize="15">
             <Columns>
-                <RadzenDataGridColumn TItem="SavedReportDto" Property="Name" Title="Name" />
-                <RadzenDataGridColumn TItem="SavedReportDto" Property="ReportType" Title="Type" />
-                <RadzenDataGridColumn TItem="SavedReportDto" Property="UpdatedAtUtc" Title="Updated" />
+                <RadzenDataGridColumn TItem="ReportingSavedReportDto" Property="Name" Title="Name" />
+                <RadzenDataGridColumn TItem="ReportingSavedReportDto" Property="SubjectArea" Title="Subject" />
+                <RadzenDataGridColumn TItem="ReportingSavedReportDto" Property="UpdatedAtUtc" Title="Updated" />
+                <RadzenDataGridColumn TItem="ReportingSavedReportDto" Title="Actions">
+                    <Template Context="row">
+                        <RadzenButton Text="Run" Size="ButtonSize.Small" Click="@(async () => await RunAsync(row))" />
+                    </Template>
+                </RadzenDataGridColumn>
             </Columns>
         </RadzenDataGrid>
+    </RadzenCard>
+
+    <RadzenCard>
+        <RadzenText TextStyle="TextStyle.Subtitle1">Result</RadzenText>
+        @if (result is null)
+        {
+            <RadzenText>No saved report has been run yet.</RadzenText>
+        }
+        else
+        {
+            <div style="overflow:auto">
+                <table class="rz-grid-table" style="width:100%">
+                    <thead>
+                        <tr>
+                            @foreach (var field in result.Fields)
+                            {
+                                <th>@field</th>
+                            }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in result.Rows)
+                        {
+                            <tr>
+                                @foreach (var field in result.Fields)
+                                {
+                                    <td>@FormatCell(row.Values, field)</td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
     </RadzenCard>
 </RadzenStack>
 
 @code {
-    private SavedReportDto[] reports = Array.Empty<SavedReportDto>();
-    private string? newName;
-    private string? incidentIdText;
+    private ReportingSavedReportDto[] reports = Array.Empty<ReportingSavedReportDto>();
+    private ReportingQueryResultDto? result;
+    private string? errorText;
 
     protected override async Task OnInitializedAsync() => await LoadAsync();
 
     private async Task LoadAsync()
     {
-        reports = await Http.GetFromJsonAsync<SavedReportDto[]>("/api/reports/saved") ?? Array.Empty<SavedReportDto>();
+        reports = await Http.GetFromJsonAsync<ReportingSavedReportDto[]>("/api/reporting/reports") ?? Array.Empty<ReportingSavedReportDto>();
     }
 
-    private async Task SaveAsync()
+    private async Task RunAsync(ReportingSavedReportDto report)
     {
-        long.TryParse(incidentIdText, out var incidentId);
-        using var doc = System.Text.Json.JsonDocument.Parse($"{{\"incidentId\":{incidentId}}}");
-        var req = new SaveReportRequest(newName ?? "Saved call report", "call", doc.RootElement.Clone(), true);
-        var response = await Http.PostAsJsonAsync("/api/reports/saved", req);
-        if (response.IsSuccessStatusCode)
-            await LoadAsync();
+        errorText = null;
+        var response = await Http.PostAsJsonAsync("/api/reporting/report/execute", new ReportingExecuteReportRequestDto(report.Id, null));
+        if (!response.IsSuccessStatusCode)
+        {
+            errorText = $"Run failed: {(int)response.StatusCode} {response.ReasonPhrase}";
+            return;
+        }
+        result = await response.Content.ReadFromJsonAsync<ReportingQueryResultDto>();
+    }
+
+    private static string FormatCell(Dictionary<string, object?> values, string field)
+    {
+        if (!values.TryGetValue(field, out var value) || value is null)
+            return string.Empty;
+        return value switch
+        {
+            DateTime dt => dt.ToLocalTime().ToString("yyyy-MM-dd HH:mm"),
+            DateTimeOffset dto => dto.LocalDateTime.ToString("yyyy-MM-dd HH:mm"),
+            _ => value.ToString() ?? string.Empty
+        };
     }
 }
