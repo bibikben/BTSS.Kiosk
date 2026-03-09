@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using System.Threading.RateLimiting;
+using System.Linq.Expressions;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -163,6 +164,7 @@ using (var scope = app.Services.CreateScope())
     await EnsureEpic13SchemaAsync(db);
     await EnsureEpic3SchemaAsync(db);
     await EnsureEpic2SchemaAsync(db);
+    await EnsureEpic8SchemaAsync(db);
     await EnsureIngestSchemaAsync(db);
     await scope.ServiceProvider.GetRequiredService<HumanAuthService>().SeedDefaultsAsync();
 }
@@ -786,6 +788,115 @@ api.MapPost("/reports/export", async (HttpContext http, AppDbContext db, ExportR
     await db.SaveChangesAsync();
     return Results.File(Encoding.UTF8.GetBytes(payload), contentType, fileName);
 }).RequireAuthorization();
+
+api.MapGet("/reporting/model", async (HttpContext http, AppDbContext db, int? agencyId) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (effectiveAgencyId is null)
+        return Results.Forbid();
+    if (!HasAnyPermission(http.User, PermissionCatalog.ReportRun, PermissionCatalog.ReportDesign, PermissionCatalog.AdminDiagnostics))
+        return Results.Forbid();
+
+    var agencyName = await db.Agencies.AsNoTracking().Where(x => x.Id == effectiveAgencyId.Value).Select(x => x.Name).FirstOrDefaultAsync() ?? $"Agency {effectiveAgencyId.Value}";
+    return Results.Ok(BuildReportingModel(effectiveAgencyId.Value, agencyName, http.User));
+}).RequireAuthorization();
+
+api.MapPost("/reporting/query/preview", async (HttpContext http, AppDbContext db, ReportingQueryRequestDto request, int? agencyId) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (effectiveAgencyId is null)
+        return Results.Forbid();
+    if (!HasAnyPermission(http.User, PermissionCatalog.ReportRun, PermissionCatalog.ReportDesign, PermissionCatalog.AdminDiagnostics))
+        return Results.Forbid();
+
+    var limited = request with { Take = Math.Clamp(request.Take ?? 25, 1, 100) };
+    var result = await ExecuteReportingQueryAsync(db, limited, effectiveAgencyId.Value, includeDiagnostics: CanAccessDiagnosticsReporting(http.User));
+    return Results.Ok(result);
+}).RequireAuthorization();
+
+api.MapPost("/reporting/query/execute", async (HttpContext http, AppDbContext db, ReportingQueryRequestDto request, int? agencyId) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (effectiveAgencyId is null)
+        return Results.Forbid();
+    if (!HasAnyPermission(http.User, PermissionCatalog.ReportRun, PermissionCatalog.ReportDesign, PermissionCatalog.AdminDiagnostics))
+        return Results.Forbid();
+
+    var result = await ExecuteReportingQueryAsync(db, request, effectiveAgencyId.Value, includeDiagnostics: CanAccessDiagnosticsReporting(http.User));
+    return Results.Ok(result);
+}).RequireAuthorization();
+
+api.MapPost("/reporting/report/execute", async (HttpContext http, AppDbContext db, ReportingExecuteReportRequestDto request, int? agencyId) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (effectiveAgencyId is null)
+        return Results.Forbid();
+    if (!HasAnyPermission(http.User, PermissionCatalog.ReportRun, PermissionCatalog.ReportDesign, PermissionCatalog.AdminDiagnostics))
+        return Results.Forbid();
+
+    ReportingQueryRequestDto? query = request.Query;
+    if (request.SavedReportId.HasValue)
+    {
+        var saved = await db.SavedReports.AsNoTracking().FirstOrDefaultAsync(x => x.Id == request.SavedReportId.Value && x.AgencyId == effectiveAgencyId.Value);
+        if (saved is null)
+            return Results.NotFound();
+        query = DeserializeReportingQuery(saved.ParametersJson, saved.ReportType);
+    }
+
+    if (query is null)
+        return Results.BadRequest(new { message = "A saved report id or query payload is required." });
+
+    var result = await ExecuteReportingQueryAsync(db, query, effectiveAgencyId.Value, includeDiagnostics: CanAccessDiagnosticsReporting(http.User));
+    return Results.Ok(result);
+}).RequireAuthorization();
+
+api.MapGet("/reporting/reports", async (HttpContext http, AppDbContext db, int? agencyId) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (effectiveAgencyId is null)
+        return Results.Forbid();
+    if (!HasAnyPermission(http.User, PermissionCatalog.ReportRun, PermissionCatalog.ReportDesign, PermissionCatalog.AdminDiagnostics))
+        return Results.Forbid();
+
+    var items = await db.SavedReports.AsNoTracking()
+        .Where(x => x.AgencyId == effectiveAgencyId.Value)
+        .OrderByDescending(x => x.UpdatedAtUtc)
+        .ToListAsync();
+
+    return Results.Ok(items.Select(x => new ReportingSavedReportDto(x.Id, x.AgencyId, x.Name, x.ReportType, string.Empty, x.IsShared, false, x.UpdatedAtUtc, ParseJsonElement(x.ParametersJson))));
+}).RequireAuthorization();
+
+api.MapPost("/reporting/reports", async (HttpContext http, AppDbContext db, ReportingSaveReportRequestDto request, int? agencyId) =>
+{
+    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
+    if (effectiveAgencyId is null)
+        return Results.Forbid();
+    if (!HasAnyPermission(http.User, PermissionCatalog.ReportDesign, PermissionCatalog.AdminDiagnostics))
+        return Results.Forbid();
+
+    SavedReportEntity? entity = null;
+    if (request.Id.HasValue)
+        entity = await db.SavedReports.FirstOrDefaultAsync(x => x.Id == request.Id.Value && x.AgencyId == effectiveAgencyId.Value);
+    if (entity is null)
+    {
+        entity = new SavedReportEntity
+        {
+            AgencyId = effectiveAgencyId.Value,
+            CreatedByUserId = ResolveUserId(http.User),
+            CreatedAtUtc = DateTime.UtcNow
+        };
+        db.SavedReports.Add(entity);
+    }
+
+    entity.Name = string.IsNullOrWhiteSpace(request.Name) ? $"{request.SubjectArea} report" : request.Name.Trim();
+    entity.ReportType = string.IsNullOrWhiteSpace(request.SubjectArea) ? "incidents" : request.SubjectArea.Trim();
+    entity.ParametersJson = JsonSerializer.Serialize(request.Definition, JsonUtil.Options);
+    entity.IsShared = request.IsShared;
+    entity.UpdatedAtUtc = DateTime.UtcNow;
+    await db.SaveChangesAsync();
+
+    return Results.Ok(new ReportingSavedReportDto(entity.Id, entity.AgencyId, entity.Name, entity.ReportType, request.Description ?? string.Empty, entity.IsShared, false, entity.UpdatedAtUtc, ParseJsonElement(entity.ParametersJson)));
+}).RequireAuthorization();
 api.MapGet("/sync/incidents", async (HttpContext http, AppDbContext db, int? agencyId, DateTime? sinceUtc, int? take) =>
 {
     var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
@@ -801,41 +912,188 @@ api.MapGet("/sync/incidents", async (HttpContext http, AppDbContext db, int? age
     return Results.Ok(items);
 }).RequireAuthorization();
 
-api.MapGet("/sync/changes", async (HttpContext http, AppDbContext db, int? agencyId, DateTime? sinceUtc, int? take) =>
+api.MapGet("/sync/bootstrap", async (HttpContext http, AppDbContext db, string deviceId, DateTime? sinceUtc, int? take) =>
 {
-    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
-    if (effectiveAgencyId is null)
-        return Results.Forbid();
+    var client = await GetAuthorizedApiClientAsync(db, http.User);
+    if (client is null) return Results.Unauthorized();
+    if (string.IsNullOrWhiteSpace(deviceId)) return Results.BadRequest(new { message = "deviceId is required." });
 
+    var device = await ResolveOrCreateDeviceAsync(db, client, deviceId, null, null, null, CancellationToken.None);
+    var agencyIds = await ResolveDeviceAgencyIdsAsync(db, client, deviceId, CancellationToken.None);
     var limit = Math.Clamp(take ?? 250, 1, 1000);
-    var changes = await db.IncidentSyncLog.AsNoTracking()
-        .Where(x => x.AgencyId == effectiveAgencyId.Value && (!sinceUtc.HasValue || x.ChangedAtUtc >= sinceUtc.Value))
+    var syncRows = await db.IncidentSyncLog.AsNoTracking()
+        .Where(x => agencyIds.Contains(x.AgencyId) && (!sinceUtc.HasValue || x.ChangedAtUtc >= sinceUtc.Value))
         .OrderBy(x => x.ChangedAtUtc)
         .Take(limit)
         .ToListAsync();
 
-    var incidentIds = changes.Select(x => x.IncidentId).Distinct().ToArray();
+    var incidentIds = syncRows.Select(x => x.IncidentId).Distinct().ToArray();
     var incidents = await db.Incidents.AsNoTracking().Where(x => incidentIds.Contains(x.Id)).ToListAsync();
-    return Results.Ok(new { changes, incidents });
+    var comments = await db.IncidentComments.AsNoTracking().Where(x => incidentIds.Contains(x.IncidentId)).ToListAsync();
+    var units = await db.IncidentUnits.AsNoTracking().Where(x => incidentIds.Contains(x.IncidentId)).ToListAsync();
+    var timeline = await db.UnitTimelineFacts.AsNoTracking().Where(x => incidentIds.Contains(x.IncidentId)).ToListAsync();
+
+    var batch = new SyncBatchEntity
+    {
+        BatchId = Guid.NewGuid().ToString("N"),
+        DeviceRefId = device.Id,
+        DeviceId = device.DeviceId,
+        AgencyId = device.AgencyId,
+        ApiClientId = device.ApiClientId,
+        Direction = "download",
+        ItemCount = syncRows.Count,
+        Status = "bootstrapped",
+        StartedAtUtc = DateTime.UtcNow,
+        CompletedAtUtc = DateTime.UtcNow
+    };
+    db.SyncBatches.Add(batch);
+    await UpsertDeviceSyncStateAsync(db, device, state =>
+    {
+        state.LastBootstrapAtUtc = DateTime.UtcNow;
+        state.LastBatchId = batch.BatchId;
+        state.LastChangeAtUtc = syncRows.LastOrDefault()?.ChangedAtUtc;
+        state.LastSyncLogId = syncRows.LastOrDefault()?.Id;
+    }, CancellationToken.None);
+    await db.SaveChangesAsync();
+
+    return Results.Ok(new SyncBootstrapResponseDto(
+        batch.BatchId,
+        ResolveDeviceIdentity(device, await db.DeviceSettings.AsNoTracking().FirstOrDefaultAsync(x => x.DeviceId == deviceId && x.AgencyId == device.AgencyId), await db.DeviceSyncStates.AsNoTracking().FirstOrDefaultAsync(x => x.DeviceId == deviceId && x.AgencyId == device.AgencyId)),
+        agencyIds.ToArray(),
+        ResolveDeviceConfiguration(client, deviceId),
+        incidents.Cast<object>().ToArray(),
+        comments.Cast<object>().ToArray(),
+        units.Cast<object>().ToArray(),
+        timeline.Cast<object>().ToArray(),
+        DateTime.UtcNow));
 }).RequireAuthorization();
 
-api.MapPost("/sync/ack", async (HttpContext http, AppDbContext db, int? agencyId, SyncAckRequest req) =>
+api.MapGet("/sync/changes", async (HttpContext http, AppDbContext db, string deviceId, int? agencyId, DateTime? sinceUtc, int? take) =>
 {
-    var effectiveAgencyId = ResolveEffectiveAgencyId(http.User, agencyId);
-    if (effectiveAgencyId is null)
-        return Results.Forbid();
+    var client = await GetAuthorizedApiClientAsync(db, http.User);
+    if (client is null) return Results.Unauthorized();
+    if (string.IsNullOrWhiteSpace(deviceId)) return Results.BadRequest(new { message = "deviceId is required." });
+
+    var device = await ResolveOrCreateDeviceAsync(db, client, deviceId, null, null, null, CancellationToken.None);
+    var agencyIds = await ResolveDeviceAgencyIdsAsync(db, client, deviceId, CancellationToken.None);
+    if (agencyId.HasValue && agencyIds.Contains(agencyId.Value))
+        agencyIds = new List<int> { agencyId.Value };
+
+    var limit = Math.Clamp(take ?? 250, 1, 1000);
+    var rows = await db.IncidentSyncLog.AsNoTracking()
+        .Where(x => agencyIds.Contains(x.AgencyId) && (!sinceUtc.HasValue || x.ChangedAtUtc >= sinceUtc.Value))
+        .OrderBy(x => x.ChangedAtUtc)
+        .Take(limit)
+        .ToListAsync();
+
+    var incidentIds = rows.Select(x => x.IncidentId).Distinct().ToArray();
+    var incidents = await db.Incidents.AsNoTracking().Where(x => incidentIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id);
+    var comments = await db.IncidentComments.AsNoTracking().Where(x => incidentIds.Contains(x.IncidentId)).ToListAsync();
+    var units = await db.IncidentUnits.AsNoTracking().Where(x => incidentIds.Contains(x.IncidentId)).ToListAsync();
+    var timeline = await db.UnitTimelineFacts.AsNoTracking().Where(x => incidentIds.Contains(x.IncidentId)).ToListAsync();
+
+    var batch = new SyncBatchEntity
+    {
+        BatchId = Guid.NewGuid().ToString("N"),
+        DeviceRefId = device.Id,
+        DeviceId = device.DeviceId,
+        AgencyId = device.AgencyId,
+        ApiClientId = device.ApiClientId,
+        Direction = "download",
+        ItemCount = rows.Count,
+        Status = "completed",
+        StartedAtUtc = DateTime.UtcNow,
+        CompletedAtUtc = DateTime.UtcNow
+    };
+    db.SyncBatches.Add(batch);
+    await UpsertDeviceSyncStateAsync(db, device, state =>
+    {
+        state.LastBatchId = batch.BatchId;
+        state.LastChangeAtUtc = rows.LastOrDefault()?.ChangedAtUtc;
+        state.LastSyncLogId = rows.LastOrDefault()?.Id;
+    }, CancellationToken.None);
+    await db.SaveChangesAsync();
+
+    var payload = rows.Select(x => new DeviceSyncChangeDto(
+        x.Id,
+        x.IncidentId,
+        x.Scope,
+        x.ChangeType,
+        x.ChangedAtUtc,
+        incidents.GetValueOrDefault(x.IncidentId),
+        comments.Where(c => c.IncidentId == x.IncidentId).Cast<object>().ToArray(),
+        units.Where(u => u.IncidentId == x.IncidentId).Cast<object>().ToArray(),
+        timeline.Where(t => t.IncidentId == x.IncidentId).Cast<object>().ToArray())).ToArray();
+
+    return Results.Ok(new SyncChangesResponseDto(batch.BatchId, deviceId, DateTime.UtcNow, payload));
+}).RequireAuthorization();
+
+api.MapPost("/sync/outbox", async (HttpContext http, AppDbContext db, SyncOutboxRequestDto req) =>
+{
+    var client = await GetAuthorizedApiClientAsync(db, http.User);
+    if (client is null) return Results.Unauthorized();
+    if (string.IsNullOrWhiteSpace(req.DeviceId)) return Results.BadRequest(new { message = "deviceId is required." });
+
+    var device = await ResolveOrCreateDeviceAsync(db, client, req.DeviceId, null, null, null, CancellationToken.None);
+    foreach (var item in req.Items ?? new List<SyncOutboxItemDto>())
+    {
+        db.SyncErrors.Add(new SyncErrorEntity
+        {
+            DeviceRefId = device.Id,
+            DeviceId = device.DeviceId,
+            AgencyId = device.AgencyId,
+            ApiClientId = device.ApiClientId,
+            Scope = string.IsNullOrWhiteSpace(item.Scope) ? "sync" : item.Scope,
+            ErrorCode = string.IsNullOrWhiteSpace(item.ErrorCode) ? "outbox" : item.ErrorCode,
+            Message = item.Message ?? string.Empty,
+            PayloadJson = item.Payload?.ToJsonString() ?? "{}",
+            CreatedAtUtc = item.OccurredAtUtc ?? DateTime.UtcNow
+        });
+    }
+    await db.SaveChangesAsync();
+    return Results.Ok(new { stored = req.Items?.Count ?? 0, deviceId = req.DeviceId });
+}).RequireAuthorization();
+
+api.MapPost("/sync/ack", async (HttpContext http, AppDbContext db, int? agencyId, SyncAckEnvelopeDto req) =>
+{
+    var client = await GetAuthorizedApiClientAsync(db, http.User);
+    if (client is null) return Results.Unauthorized();
     if (req.SyncLogIds is null || req.SyncLogIds.Length == 0)
         return Results.BadRequest(new { message = "SyncLogIds is required." });
 
-    var rows = await db.IncidentSyncLog.Where(x => req.SyncLogIds.Contains(x.Id) && x.AgencyId == effectiveAgencyId.Value).ToListAsync();
+    var device = await ResolveOrCreateDeviceAsync(db, client, req.DeviceId, null, null, null, CancellationToken.None);
+    var agencyIds = await ResolveDeviceAgencyIdsAsync(db, client, req.DeviceId, CancellationToken.None);
+    if (agencyId.HasValue && agencyIds.Contains(agencyId.Value))
+        agencyIds = new List<int> { agencyId.Value };
+
+    var rows = await db.IncidentSyncLog.Where(x => req.SyncLogIds.Contains(x.Id) && agencyIds.Contains(x.AgencyId)).ToListAsync();
     foreach (var row in rows)
     {
         row.AckedAtUtc = DateTime.UtcNow;
         row.DeviceId = req.DeviceId ?? row.DeviceId;
         row.Notes = req.Notes ?? row.Notes;
     }
+
+    await UpsertDeviceSyncStateAsync(db, device, state =>
+    {
+        state.LastAckAtUtc = DateTime.UtcNow;
+        state.LastBatchId = req.BatchId ?? state.LastBatchId;
+        state.LastSyncLogId = req.LastSyncLogId ?? rows.MaxBy(x => x.Id)?.Id;
+    }, CancellationToken.None);
+
+    if (!string.IsNullOrWhiteSpace(req.BatchId))
+    {
+        var batch = await db.SyncBatches.FirstOrDefaultAsync(x => x.BatchId == req.BatchId);
+        if (batch is not null)
+        {
+            batch.Status = "acked";
+            batch.CompletedAtUtc = DateTime.UtcNow;
+            batch.Notes = req.Notes ?? batch.Notes;
+        }
+    }
+
     await db.SaveChangesAsync();
-    return Results.Ok(new { acked = rows.Count, agencyId = effectiveAgencyId });
+    return Results.Ok(new { acked = rows.Count, deviceId = req.DeviceId, batchId = req.BatchId });
 }).RequireAuthorization();
 
 api.MapGet("/service/incidents", async (AppDbContext db, ClaimsPrincipal user, int? take) =>
@@ -1547,6 +1805,116 @@ app.MapPost("/auth/device-login", async (HumanAuthService auth, HumanLoginReques
 })
 .AllowAnonymous();
 
+api.MapPost("/device/register", async (HttpContext http, AppDbContext db, DeviceBootstrapRequest req, CancellationToken ct) =>
+{
+    var client = await GetAuthorizedApiClientAsync(db, http.User);
+    if (client is null) return Results.Unauthorized();
+    if (string.IsNullOrWhiteSpace(req.DeviceId)) return Results.BadRequest(new { message = "DeviceId is required." });
+
+    var audit = BuildAudit(req.Audit, http.User, "device-register");
+    var deviceSettings = ParseDeviceSettings(client.DeviceSettingsJson);
+    var displayRegistrations = ParseDisplayRegistrations(client.DisplayRegistrationsJson);
+    var entry = UpsertDeviceSettingsEntry(deviceSettings, req.DeviceId, new DeviceSettingsUpsertRequest
+    {
+        DeviceId = req.DeviceId,
+        Profile = req.Profile,
+        Settings = req.Settings ?? new JsonObject(),
+        Audit = req.Audit
+    }, audit);
+
+    if (req.UpsertRegistration)
+    {
+        UpsertDisplayRegistration(displayRegistrations, req.DeviceId, new DisplayRegistrationUpsertRequest
+        {
+            DeviceId = req.DeviceId,
+            Name = req.Profile?.DisplayName,
+            Description = req.Profile?.Description,
+            Location = req.Profile?.Location,
+            Enabled = req.Profile?.Enabled ?? true,
+            Settings = req.Settings ?? new JsonObject(),
+            Profile = req.Profile,
+            Audit = req.Audit
+        }, audit);
+    }
+
+    client.DeviceSettingsJson = JsonSerializer.Serialize(deviceSettings, JsonUtil.Options);
+    client.DisplayRegistrationsJson = JsonSerializer.Serialize(displayRegistrations, JsonUtil.Options);
+    client.UpdatedAtUtc = DateTime.UtcNow;
+
+    var device = await ResolveOrCreateDeviceAsync(db, client, req.DeviceId, req.Profile?.DisplayName, req.Profile?.Metadata?["machineName"]?.ToString(), req.Profile?.Metadata?["deviceType"]?.ToString(), ct);
+    var settingsEntity = await db.DeviceSettings.FirstOrDefaultAsync(x => x.DeviceId == req.DeviceId && x.AgencyId == client.AgencyId, ct);
+    if (settingsEntity is null)
+    {
+        settingsEntity = new DeviceSettingEntity
+        {
+            DeviceRefId = device.Id,
+            DeviceId = req.DeviceId,
+            AgencyId = client.AgencyId,
+            SettingsJson = (req.Settings ?? new JsonObject()).ToJsonString(),
+            UpdatedAtUtc = DateTime.UtcNow
+        };
+        db.DeviceSettings.Add(settingsEntity);
+    }
+    else
+    {
+        settingsEntity.DeviceRefId = device.Id;
+        settingsEntity.SettingsJson = (req.Settings ?? new JsonObject()).ToJsonString();
+        settingsEntity.UpdatedAtUtc = DateTime.UtcNow;
+    }
+
+    await UpsertDeviceSyncStateAsync(db, device, state =>
+    {
+        state.LastBootstrapAtUtc = DateTime.UtcNow;
+        state.ConflictPolicy ??= "server-wins";
+    }, ct);
+
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(new { message = "Device registered", device = ResolveDeviceIdentity(device, settingsEntity, await db.DeviceSyncStates.AsNoTracking().FirstOrDefaultAsync(x => x.DeviceId == req.DeviceId && x.AgencyId == client.AgencyId, ct)), configuration = ResolveDeviceConfiguration(client, req.DeviceId), settings = entry });
+}).RequireAuthorization("scope:device.write");
+
+api.MapPost("/device/heartbeat", async (HttpContext http, AppDbContext db, DeviceHeartbeatRequestDto req, CancellationToken ct) =>
+{
+    var client = await GetAuthorizedApiClientAsync(db, http.User);
+    if (client is null) return Results.Unauthorized();
+    if (string.IsNullOrWhiteSpace(req.DeviceId)) return Results.BadRequest(new { message = "DeviceId is required." });
+
+    var device = await ResolveOrCreateDeviceAsync(db, client, req.DeviceId, null, null, null, ct);
+    db.DeviceHeartbeats.Add(new DeviceHeartbeatEntity
+    {
+        DeviceRefId = device.Id,
+        DeviceId = device.DeviceId,
+        ApiClientId = device.ApiClientId,
+        AgencyId = device.AgencyId,
+        ReceivedAtUtc = DateTime.UtcNow,
+        Status = req.Status,
+        Message = req.Message,
+        PayloadJson = req.Payload?.ToJsonString() ?? "{}"
+    });
+    await UpsertDeviceSyncStateAsync(db, device, state => state.LastHeartbeatAtUtc = DateTime.UtcNow, ct);
+    await db.SaveChangesAsync(ct);
+    return Results.Ok(new { message = "Heartbeat recorded", deviceId = req.DeviceId, receivedAtUtc = DateTime.UtcNow });
+}).RequireAuthorization("scope:device.write");
+
+api.MapGet("/device/{deviceId}", async (HttpContext http, AppDbContext db, string deviceId, CancellationToken ct) =>
+{
+    var client = await GetAuthorizedApiClientAsync(db, http.User);
+    if (client is null) return Results.Unauthorized();
+    var device = await db.Devices.AsNoTracking().FirstOrDefaultAsync(x => x.ApiClientId == client.Id && x.DeviceId == deviceId, ct);
+    if (device is null) return Results.NotFound();
+    var settings = await db.DeviceSettings.AsNoTracking().FirstOrDefaultAsync(x => x.DeviceId == deviceId && x.AgencyId == device.AgencyId, ct);
+    var sync = await db.DeviceSyncStates.AsNoTracking().FirstOrDefaultAsync(x => x.DeviceId == deviceId && x.AgencyId == device.AgencyId, ct);
+    return Results.Ok(ResolveDeviceIdentity(device, settings, sync));
+}).RequireAuthorization("scope:device.read");
+
+api.MapGet("/device/{deviceId}/displays", async (HttpContext http, AppDbContext db, string deviceId, CancellationToken ct) =>
+{
+    var client = await GetAuthorizedApiClientAsync(db, http.User);
+    if (client is null) return Results.Unauthorized();
+    var display = ParseDisplayRegistrations(client.DisplayRegistrationsJson).FirstOrDefault(x => string.Equals(x.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase));
+    if (display is null) return Results.Ok(Array.Empty<DeviceDisplayDto>());
+    return Results.Ok(new [] { new DeviceDisplayDto(display.DeviceId, display.Name, display.Description, display.Location, display.Enabled, display.Settings, ToProfileDto(display.Profile)) });
+}).RequireAuthorization("scope:display.read");
+
 app.MapHumanAdminEndpoints();
 app.MapGet("/admin/bootstrap", async (AppDbContext db, CancellationToken ct) =>
 {
@@ -1557,6 +1925,84 @@ app.MapGet("/admin/bootstrap", async (AppDbContext db, CancellationToken ct) =>
 })
 .RequireAuthorization();
 app.Run();
+
+static async Task<DeviceEntity> ResolveOrCreateDeviceAsync(AppDbContext db, ApiClient client, string deviceId, string? deviceName, string? machineName, string? deviceType, CancellationToken ct)
+{
+    var device = await db.Devices.FirstOrDefaultAsync(x => x.ApiClientId == client.Id && x.DeviceId == deviceId, ct);
+    if (device is null)
+    {
+        device = new DeviceEntity
+        {
+            ApiClientId = client.Id,
+            AgencyId = client.AgencyId,
+            DeviceId = deviceId,
+            DeviceName = deviceName,
+            MachineName = machineName,
+            DeviceType = deviceType,
+            IsEnabled = true,
+            CreatedAtUtc = DateTime.UtcNow,
+            UpdatedAtUtc = DateTime.UtcNow
+        };
+        db.Devices.Add(device);
+        await db.SaveChangesAsync(ct);
+    }
+    else
+    {
+        if (!string.IsNullOrWhiteSpace(deviceName)) device.DeviceName = deviceName;
+        if (!string.IsNullOrWhiteSpace(machineName)) device.MachineName = machineName;
+        if (!string.IsNullOrWhiteSpace(deviceType)) device.DeviceType = deviceType;
+        device.UpdatedAtUtc = DateTime.UtcNow;
+    }
+
+    var binding = await db.DeviceAgencies.FirstOrDefaultAsync(x => x.DeviceRefId == device.Id && x.AgencyId == client.AgencyId, ct);
+    if (binding is null)
+        db.DeviceAgencies.Add(new DeviceAgencyEntity { DeviceRefId = device.Id, AgencyId = client.AgencyId, IsPrimary = true });
+    else
+        binding.IsPrimary = true;
+
+    return device;
+}
+
+static async Task<List<int>> ResolveDeviceAgencyIdsAsync(AppDbContext db, ApiClient client, string deviceId, CancellationToken ct)
+{
+    var device = await db.Devices.AsNoTracking().FirstOrDefaultAsync(x => x.ApiClientId == client.Id && x.DeviceId == deviceId, ct);
+    if (device is null)
+        return new List<int> { client.AgencyId };
+
+    var ids = await db.DeviceAgencies.AsNoTracking().Where(x => x.DeviceRefId == device.Id).Select(x => x.AgencyId).Distinct().ToListAsync(ct);
+    if (ids.Count == 0) ids.Add(client.AgencyId);
+    return ids;
+}
+
+static async Task UpsertDeviceSyncStateAsync(AppDbContext db, DeviceEntity device, Action<DeviceSyncStateEntity> apply, CancellationToken ct)
+{
+    var state = await db.DeviceSyncStates.FirstOrDefaultAsync(x => x.DeviceId == device.DeviceId && x.AgencyId == device.AgencyId, ct);
+    if (state is null)
+    {
+        state = new DeviceSyncStateEntity
+        {
+            DeviceRefId = device.Id,
+            DeviceId = device.DeviceId,
+            ApiClientId = device.ApiClientId,
+            AgencyId = device.AgencyId,
+            ConflictPolicy = "server-wins",
+            StateJson = "{}",
+            UpdatedAtUtc = DateTime.UtcNow
+        };
+        db.DeviceSyncStates.Add(state);
+    }
+    apply(state);
+    state.UpdatedAtUtc = DateTime.UtcNow;
+}
+
+static DeviceIdentityDto ResolveDeviceIdentity(DeviceEntity device, DeviceSettingEntity? settings, DeviceSyncStateEntity? sync)
+    => new(device.Id, device.DeviceId, device.DeviceName, device.MachineName, device.DeviceType, device.IsEnabled, device.ApiClientId, device.AgencyId, device.UpdatedAtUtc, TryParseObject(settings?.SettingsJson), sync?.LastHeartbeatAtUtc, sync?.LastAckAtUtc, sync?.ConflictPolicy);
+
+static JsonObject? TryParseObject(string? json)
+{
+    try { return string.IsNullOrWhiteSpace(json) ? null : JsonNode.Parse(json) as JsonObject; }
+    catch { return null; }
+}
 
 static async Task EnsureEpic5SchemaAsync(AppDbContext db)
 {
@@ -2060,6 +2506,95 @@ static string NormalizeCommandStatus(string? status)
         DeviceCommandStatuses.Stale => DeviceCommandStatuses.Stale,
         _ => DeviceCommandStatuses.Acknowledged
     };
+}
+
+static async Task EnsureEpic8SchemaAsync(AppDbContext db)
+{
+    if (!db.Database.IsSqlServer())
+        return;
+
+    var sql = @"
+IF OBJECT_ID(N'[dbo].[DeviceHeartbeats]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[DeviceHeartbeats]
+    (
+        [Id] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [DeviceRefId] BIGINT NOT NULL,
+        [DeviceId] NVARCHAR(128) NOT NULL,
+        [ApiClientId] INT NOT NULL,
+        [AgencyId] INT NOT NULL,
+        [ReceivedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_DeviceHeartbeats_ReceivedAtUtc] DEFAULT SYSUTCDATETIME(),
+        [Status] NVARCHAR(64) NULL,
+        [Message] NVARCHAR(MAX) NULL,
+        [PayloadJson] NVARCHAR(MAX) NOT NULL CONSTRAINT [DF_DeviceHeartbeats_PayloadJson] DEFAULT N'{}'
+    );
+    CREATE INDEX [IX_DeviceHeartbeats_DeviceId_ReceivedAtUtc] ON [dbo].[DeviceHeartbeats]([DeviceId],[ReceivedAtUtc]);
+END;
+
+IF OBJECT_ID(N'[dbo].[DeviceSyncStates]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[DeviceSyncStates]
+    (
+        [Id] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [DeviceRefId] BIGINT NOT NULL,
+        [DeviceId] NVARCHAR(128) NOT NULL,
+        [ApiClientId] INT NOT NULL,
+        [AgencyId] INT NOT NULL,
+        [LastBootstrapAtUtc] DATETIME2 NULL,
+        [LastHeartbeatAtUtc] DATETIME2 NULL,
+        [LastAckAtUtc] DATETIME2 NULL,
+        [LastChangeAtUtc] DATETIME2 NULL,
+        [LastSyncLogId] BIGINT NULL,
+        [LastBatchId] NVARCHAR(64) NULL,
+        [ConflictPolicy] NVARCHAR(64) NULL,
+        [StateJson] NVARCHAR(MAX) NOT NULL CONSTRAINT [DF_DeviceSyncStates_StateJson] DEFAULT N'{}',
+        [UpdatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_DeviceSyncStates_UpdatedAtUtc] DEFAULT SYSUTCDATETIME()
+    );
+    CREATE UNIQUE INDEX [IX_DeviceSyncStates_DeviceId_AgencyId] ON [dbo].[DeviceSyncStates]([DeviceId],[AgencyId]);
+END;
+
+IF OBJECT_ID(N'[dbo].[SyncBatches]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[SyncBatches]
+    (
+        [Id] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [BatchId] NVARCHAR(64) NOT NULL,
+        [DeviceRefId] BIGINT NOT NULL,
+        [DeviceId] NVARCHAR(128) NOT NULL,
+        [AgencyId] INT NOT NULL,
+        [ApiClientId] INT NOT NULL,
+        [Direction] NVARCHAR(16) NOT NULL,
+        [ItemCount] INT NOT NULL CONSTRAINT [DF_SyncBatches_ItemCount] DEFAULT 0,
+        [StartedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_SyncBatches_StartedAtUtc] DEFAULT SYSUTCDATETIME(),
+        [CompletedAtUtc] DATETIME2 NULL,
+        [Status] NVARCHAR(32) NOT NULL CONSTRAINT [DF_SyncBatches_Status] DEFAULT N'started',
+        [Notes] NVARCHAR(MAX) NULL
+    );
+    CREATE UNIQUE INDEX [IX_SyncBatches_BatchId] ON [dbo].[SyncBatches]([BatchId]);
+END;
+
+IF OBJECT_ID(N'[dbo].[SyncErrors]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[SyncErrors]
+    (
+        [Id] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [DeviceRefId] BIGINT NULL,
+        [DeviceId] NVARCHAR(128) NULL,
+        [AgencyId] INT NULL,
+        [ApiClientId] INT NULL,
+        [Scope] NVARCHAR(64) NOT NULL CONSTRAINT [DF_SyncErrors_Scope] DEFAULT N'sync',
+        [ErrorCode] NVARCHAR(64) NOT NULL CONSTRAINT [DF_SyncErrors_ErrorCode] DEFAULT N'outbox',
+        [Message] NVARCHAR(MAX) NOT NULL,
+        [PayloadJson] NVARCHAR(MAX) NOT NULL CONSTRAINT [DF_SyncErrors_PayloadJson] DEFAULT N'{}',
+        [IsResolved] BIT NOT NULL CONSTRAINT [DF_SyncErrors_IsResolved] DEFAULT 0,
+        [CreatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_SyncErrors_CreatedAtUtc] DEFAULT SYSUTCDATETIME(),
+        [ResolvedAtUtc] DATETIME2 NULL
+    );
+    CREATE INDEX [IX_SyncErrors_DeviceId_CreatedAtUtc] ON [dbo].[SyncErrors]([DeviceId],[CreatedAtUtc]);
+END;
+";
+
+    await db.Database.ExecuteSqlRawAsync(sql);
 }
 
 static async Task EnsureEpic10SchemaAsync(AppDbContext db)
@@ -3136,6 +3671,383 @@ static void SetIfPresent(JsonObject target, string key, string? value)
         target[key] = value;
 }
 
+static bool HasAnyPermission(ClaimsPrincipal user, params string[] permissions)
+{
+    if (user.Claims.Any(x => x.Type == "is_super_user" && string.Equals(x.Value, "true", StringComparison.OrdinalIgnoreCase)))
+        return true;
+
+    var granted = user.Claims.Where(x => x.Type == "permission").Select(x => x.Value).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    return permissions.Any(granted.Contains);
+}
+
+static bool CanAccessDiagnosticsReporting(ClaimsPrincipal user) =>
+    HasAnyPermission(user, PermissionCatalog.AdminDiagnostics, PermissionCatalog.ReportDesign);
+
+static ReportingModelDto BuildReportingModel(int agencyId, string agencyName, ClaimsPrincipal user)
+{
+    var actions = new List<string> { "preview", "execute" };
+    if (HasAnyPermission(user, PermissionCatalog.ReportDesign, PermissionCatalog.AdminDiagnostics))
+        actions.Add("save");
+
+    var commonOps = new[]
+    {
+        new ReportingFilterOperatorDto("eq", "Equals", "string"),
+        new ReportingFilterOperatorDto("contains", "Contains", "string"),
+        new ReportingFilterOperatorDto("gte", "On or after", "date"),
+        new ReportingFilterOperatorDto("lte", "On or before", "date")
+    };
+
+    var areas = new List<ReportingSubjectAreaDto>
+    {
+        new("incidents", "Incidents", "Incident header data scoped to the active agency.", false, new[]
+        {
+            new ReportingFieldDto("incidentId", "Incident Id", "string", true, true, true),
+            new ReportingFieldDto("type", "Type", "string", true, true, true),
+            new ReportingFieldDto("priority", "Priority", "string", true, true, true),
+            new ReportingFieldDto("status", "Status", "string", true, true, true),
+            new ReportingFieldDto("address", "Address", "string", true, true, true),
+            new ReportingFieldDto("dispatchedAtUtc", "Dispatched", "datetime", false, true, true),
+            new ReportingFieldDto("closedAtUtc", "Closed", "datetime", false, true, true),
+            new ReportingFieldDto("updatedAtUtc", "Updated", "datetime", false, true, true)
+        }, commonOps),
+        new("units", "Units", "Current incident/unit assignments for the active agency.", false, new[]
+        {
+            new ReportingFieldDto("incidentId", "Incident Id", "string", true, true, true),
+            new ReportingFieldDto("unitIdentifier", "Unit", "string", true, true, true),
+            new ReportingFieldDto("unitType", "Type", "string", true, true, true),
+            new ReportingFieldDto("station", "Station", "string", false, true, true),
+            new ReportingFieldDto("currentStatus", "Current Status", "string", true, true, true),
+            new ReportingFieldDto("updatedAtUtc", "Updated", "datetime", false, true, true)
+        }, commonOps),
+        new("unitTimelines", "Unit Timelines", "Pivot-friendly timeline facts per unit.", false, new[]
+        {
+            new ReportingFieldDto("incidentId", "Incident Id", "string", true, true, true),
+            new ReportingFieldDto("unitIdentifier", "Unit", "string", true, true, true),
+            new ReportingFieldDto("dispatchedAtUtc", "Dispatched", "datetime", true, true, true),
+            new ReportingFieldDto("enrouteAtUtc", "Enroute", "datetime", false, true, true),
+            new ReportingFieldDto("arrivedAtUtc", "Arrived", "datetime", false, true, true),
+            new ReportingFieldDto("clearedAtUtc", "Cleared", "datetime", false, true, true),
+            new ReportingFieldDto("inQuartersAtUtc", "In Quarters", "datetime", false, true, true),
+            new ReportingFieldDto("dispatchToClearMinutes", "Dispatch to Clear (min)", "number", false, false, true)
+        }, commonOps),
+        new("comments", "Comments", "Incident narrative/comments limited to the active agency's incidents.", false, new[]
+        {
+            new ReportingFieldDto("incidentId", "Incident Id", "string", true, true, true),
+            new ReportingFieldDto("occurredAtUtc", "Occurred", "datetime", true, true, true),
+            new ReportingFieldDto("createdAgency", "Created Agency", "string", false, true, true),
+            new ReportingFieldDto("createdBy", "Created By", "string", false, true, true),
+            new ReportingFieldDto("message", "Message", "string", true, true, false)
+        }, commonOps),
+    };
+
+    if (CanAccessDiagnosticsReporting(user))
+    {
+        areas.Add(new("devices", "Devices", "Registered devices and last-seen data for the active agency.", true, new[]
+        {
+            new ReportingFieldDto("deviceId", "Device Id", "string", true, true, true),
+            new ReportingFieldDto("deviceName", "Device Name", "string", true, true, true),
+            new ReportingFieldDto("machineName", "Machine Name", "string", false, true, true),
+            new ReportingFieldDto("deviceType", "Device Type", "string", false, true, true),
+            new ReportingFieldDto("isEnabled", "Enabled", "bool", false, true, true),
+            new ReportingFieldDto("updatedAtUtc", "Updated", "datetime", true, true, true)
+        }, commonOps));
+        areas.Add(new("syncHealth", "Sync Health", "Sync and acknowledgement activity for diagnostics users.", true, new[]
+        {
+            new ReportingFieldDto("incidentId", "Incident Id", "number", true, true, true),
+            new ReportingFieldDto("changeType", "Change Type", "string", true, true, true),
+            new ReportingFieldDto("scope", "Scope", "string", false, true, true),
+            new ReportingFieldDto("changedAtUtc", "Changed", "datetime", true, true, true),
+            new ReportingFieldDto("ackedAtUtc", "Acknowledged", "datetime", false, true, true),
+            new ReportingFieldDto("deviceId", "Device Id", "string", false, true, true)
+        }, commonOps));
+    }
+
+    return new ReportingModelDto(agencyId, agencyName, actions.ToArray(), areas.ToArray());
+}
+
+static ReportingQueryRequestDto DeserializeReportingQuery(string? json, string fallbackSubjectArea)
+{
+    if (string.IsNullOrWhiteSpace(json))
+        return new ReportingQueryRequestDto(fallbackSubjectArea, null, null, null, null, 50);
+    try
+    {
+        var parsed = JsonSerializer.Deserialize<ReportingQueryRequestDto>(json, JsonUtil.Options);
+        return parsed is null ? new ReportingQueryRequestDto(fallbackSubjectArea, null, null, null, null, 50) : parsed with { SubjectArea = string.IsNullOrWhiteSpace(parsed.SubjectArea) ? fallbackSubjectArea : parsed.SubjectArea };
+    }
+    catch
+    {
+        return new ReportingQueryRequestDto(fallbackSubjectArea, null, null, null, null, 50);
+    }
+}
+
+static async Task<ReportingQueryResultDto> ExecuteReportingQueryAsync(AppDbContext db, ReportingQueryRequestDto request, int agencyId, bool includeDiagnostics)
+{
+    var subject = string.IsNullOrWhiteSpace(request.SubjectArea) ? "incidents" : request.SubjectArea.Trim();
+    return subject.ToLowerInvariant() switch
+    {
+        "incidents" => await ExecuteIncidentReportingQueryAsync(db, request, agencyId),
+        "units" => await ExecuteUnitsReportingQueryAsync(db, request, agencyId),
+        "unittimelines" => await ExecuteUnitTimelinesReportingQueryAsync(db, request, agencyId),
+        "comments" => await ExecuteCommentsReportingQueryAsync(db, request, agencyId),
+        "devices" when includeDiagnostics => await ExecuteDevicesReportingQueryAsync(db, request, agencyId),
+        "synchealth" when includeDiagnostics => await ExecuteSyncHealthReportingQueryAsync(db, request, agencyId),
+        _ => new ReportingQueryResultDto(subject, agencyId, Array.Empty<string>(), 0, 0, Array.Empty<ReportingQueryRowDto>(), new[] { $"agencyId={agencyId}" })
+    };
+}
+
+static async Task<ReportingQueryResultDto> ExecuteIncidentReportingQueryAsync(AppDbContext db, ReportingQueryRequestDto request, int agencyId)
+{
+    var query = db.Incidents.AsNoTracking().Where(x => x.AgencyPrimaryId == agencyId || db.IncidentAgencies.Any(ia => ia.IncidentId == x.Id && ia.AgencyId == agencyId));
+    query = ApplyStringFilter(query, request.Filters, "status", x => x.Status);
+    query = ApplyStringFilter(query, request.Filters, "type", x => x.Type);
+    query = ApplyStringFilter(query, request.Filters, "address", x => x.Address);
+    query = ApplyDateFilter(query, request.Filters, "updatedAtUtc", x => x.UpdatedAtUtc);
+    query = ApplyDateFilter(query, request.Filters, "closedAtUtc", x => x.ClosedAtUtc);
+    query = ApplySort(query, request.Sort, x => x.UpdatedAtUtc, "updatedAtUtc");
+    var total = await query.CountAsync();
+    var incidentItems = await query.Skip(request.Skip ?? 0).Take(Math.Clamp(request.Take ?? 100, 1, 500))
+        .Select(x => new
+        {
+            incidentId = x.ExternalIncidentId,
+            type = x.Type,
+            priority = x.Priority,
+            status = x.Status,
+            address = x.Address,
+            dispatchedAtUtc = x.DispatchedAtUtc,
+            closedAtUtc = x.ClosedAtUtc,
+            updatedAtUtc = x.UpdatedAtUtc
+        }).ToListAsync();
+    var rows = incidentItems.Select(x => new Dictionary<string, object?>
+    {
+        ["incidentId"] = x.incidentId,
+        ["type"] = x.type,
+        ["priority"] = x.priority,
+        ["status"] = x.status,
+        ["address"] = x.address,
+        ["dispatchedAtUtc"] = x.dispatchedAtUtc,
+        ["closedAtUtc"] = x.closedAtUtc,
+        ["updatedAtUtc"] = x.updatedAtUtc
+    }).ToList();
+    return ToReportingResult("incidents", agencyId, request.Fields, rows, total);
+}
+
+static async Task<ReportingQueryResultDto> ExecuteUnitsReportingQueryAsync(AppDbContext db, ReportingQueryRequestDto request, int agencyId)
+{
+    var query = db.IncidentUnits.AsNoTracking().Where(x => (x.AgencyId == null || x.AgencyId == agencyId) && db.IncidentAgencies.Any(ia => ia.IncidentId == x.IncidentId && ia.AgencyId == agencyId));
+    query = ApplyStringFilter(query, request.Filters, "unitIdentifier", x => x.UnitIdentifier);
+    query = ApplyStringFilter(query, request.Filters, "currentStatus", x => x.CurrentStatus);
+    query = ApplyStringFilter(query, request.Filters, "station", x => x.Station);
+    query = ApplyDateFilter(query, request.Filters, "updatedAtUtc", x => x.UpdatedAtUtc);
+    query = ApplySort(query, request.Sort, x => x.UpdatedAtUtc, "updatedAtUtc");
+    var total = await query.CountAsync();
+    var unitItems = await query.Skip(request.Skip ?? 0).Take(Math.Clamp(request.Take ?? 100, 1, 500))
+        .Join(db.Incidents.AsNoTracking(), u => u.IncidentId, i => i.Id, (u, i) => new
+        {
+            incidentId = i.ExternalIncidentId,
+            unitIdentifier = u.UnitIdentifier,
+            unitType = u.UnitType,
+            station = u.Station,
+            currentStatus = u.CurrentStatus,
+            updatedAtUtc = u.UpdatedAtUtc
+        }).ToListAsync();
+    var rows = unitItems.Select(x => new Dictionary<string, object?>
+    {
+        ["incidentId"] = x.incidentId,
+        ["unitIdentifier"] = x.unitIdentifier,
+        ["unitType"] = x.unitType,
+        ["station"] = x.station,
+        ["currentStatus"] = x.currentStatus,
+        ["updatedAtUtc"] = x.updatedAtUtc
+    }).ToList();
+    return ToReportingResult("units", agencyId, request.Fields, rows, total);
+}
+
+static async Task<ReportingQueryResultDto> ExecuteUnitTimelinesReportingQueryAsync(AppDbContext db, ReportingQueryRequestDto request, int agencyId)
+{
+    var query = db.UnitTimelineFacts.AsNoTracking().Where(x => (x.AgencyId == null || x.AgencyId == agencyId) && db.IncidentAgencies.Any(ia => ia.IncidentId == x.IncidentId && ia.AgencyId == agencyId));
+    query = ApplyStringFilter(query, request.Filters, "unitIdentifier", x => x.UnitIdentifier);
+    query = ApplyDateFilter(query, request.Filters, "dispatchedAtUtc", x => x.DispatchedAtUtc);
+    query = ApplyDateFilter(query, request.Filters, "clearedAtUtc", x => x.ClearedAtUtc);
+    query = ApplySort(query, request.Sort, x => x.DispatchedAtUtc, "dispatchedAtUtc");
+    var total = await query.CountAsync();
+    var facts = await query.Skip(request.Skip ?? 0).Take(Math.Clamp(request.Take ?? 100, 1, 500)).Join(db.Incidents.AsNoTracking(), f => f.IncidentId, i => i.Id, (f, i) => new { f, i.ExternalIncidentId }).ToListAsync();
+    var rows = facts.Select(x => new Dictionary<string, object?>
+    {
+        ["incidentId"] = x.ExternalIncidentId,
+        ["unitIdentifier"] = x.f.UnitIdentifier,
+        ["dispatchedAtUtc"] = x.f.DispatchedAtUtc,
+        ["enrouteAtUtc"] = x.f.EnrouteAtUtc,
+        ["arrivedAtUtc"] = x.f.ArrivedAtUtc,
+        ["clearedAtUtc"] = x.f.ClearedAtUtc,
+        ["inQuartersAtUtc"] = x.f.InQuartersAtUtc,
+        ["dispatchToClearMinutes"] = MinutesBetween(x.f.DispatchedAtUtc, x.f.ClearedAtUtc)
+    }).ToList();
+    return ToReportingResult("unitTimelines", agencyId, request.Fields, rows, total);
+}
+
+static async Task<ReportingQueryResultDto> ExecuteCommentsReportingQueryAsync(AppDbContext db, ReportingQueryRequestDto request, int agencyId)
+{
+    var query = db.IncidentComments.AsNoTracking().Where(x => db.IncidentAgencies.Any(ia => ia.IncidentId == x.IncidentId && ia.AgencyId == agencyId));
+    query = ApplyStringFilter(query, request.Filters, "message", x => x.Message);
+    query = ApplyStringFilter(query, request.Filters, "createdAgency", x => x.CreatedAgency);
+    query = ApplyDateFilter(query, request.Filters, "occurredAtUtc", x => x.OccurredAtUtc);
+    query = ApplySort(query, request.Sort, x => x.OccurredAtUtc, "occurredAtUtc");
+    var total = await query.CountAsync();
+    var commentItems = await query.Skip(request.Skip ?? 0).Take(Math.Clamp(request.Take ?? 100, 1, 500))
+        .Join(db.Incidents.AsNoTracking(), c => c.IncidentId, i => i.Id, (c, i) => new
+        {
+            incidentId = i.ExternalIncidentId,
+            occurredAtUtc = c.OccurredAtUtc,
+            createdAgency = c.CreatedAgency,
+            createdBy = c.CreatedBy,
+            message = c.Message
+        }).ToListAsync();
+    var rows = commentItems.Select(x => new Dictionary<string, object?>
+    {
+        ["incidentId"] = x.incidentId,
+        ["occurredAtUtc"] = x.occurredAtUtc,
+        ["createdAgency"] = x.createdAgency,
+        ["createdBy"] = x.createdBy,
+        ["message"] = x.message
+    }).ToList();
+    return ToReportingResult("comments", agencyId, request.Fields, rows, total);
+}
+
+static async Task<ReportingQueryResultDto> ExecuteDevicesReportingQueryAsync(AppDbContext db, ReportingQueryRequestDto request, int agencyId)
+{
+    var query = db.Devices.AsNoTracking().Where(x => x.AgencyId == agencyId);
+    query = ApplyStringFilter(query, request.Filters, "deviceId", x => x.DeviceId);
+    query = ApplyStringFilter(query, request.Filters, "deviceName", x => x.DeviceName);
+    query = ApplyDateFilter(query, request.Filters, "updatedAtUtc", x => x.UpdatedAtUtc);
+    query = ApplySort(query, request.Sort, x => x.UpdatedAtUtc, "updatedAtUtc");
+    var total = await query.CountAsync();
+    var deviceItems = await query.Skip(request.Skip ?? 0).Take(Math.Clamp(request.Take ?? 100, 1, 500))
+        .Select(x => new
+        {
+            deviceId = x.DeviceId,
+            deviceName = x.DeviceName,
+            machineName = x.MachineName,
+            deviceType = x.DeviceType,
+            isEnabled = x.IsEnabled,
+            updatedAtUtc = x.UpdatedAtUtc
+        }).ToListAsync();
+    var rows = deviceItems.Select(x => new Dictionary<string, object?>
+    {
+        ["deviceId"] = x.deviceId,
+        ["deviceName"] = x.deviceName,
+        ["machineName"] = x.machineName,
+        ["deviceType"] = x.deviceType,
+        ["isEnabled"] = x.isEnabled,
+        ["updatedAtUtc"] = x.updatedAtUtc
+    }).ToList();
+    return ToReportingResult("devices", agencyId, request.Fields, rows, total);
+}
+
+static async Task<ReportingQueryResultDto> ExecuteSyncHealthReportingQueryAsync(AppDbContext db, ReportingQueryRequestDto request, int agencyId)
+{
+    var query = db.IncidentSyncLog.AsNoTracking().Where(x => x.AgencyId == agencyId);
+    query = ApplyStringFilter(query, request.Filters, "changeType", x => x.ChangeType);
+    query = ApplyStringFilter(query, request.Filters, "scope", x => x.Scope);
+    query = ApplyDateFilter(query, request.Filters, "changedAtUtc", x => x.ChangedAtUtc);
+    query = ApplySort(query, request.Sort, x => x.ChangedAtUtc, "changedAtUtc");
+    var total = await query.CountAsync();
+    var syncItems = await query.Skip(request.Skip ?? 0).Take(Math.Clamp(request.Take ?? 100, 1, 500))
+        .Select(x => new
+        {
+            incidentId = x.IncidentId,
+            changeType = x.ChangeType,
+            scope = x.Scope,
+            changedAtUtc = x.ChangedAtUtc,
+            ackedAtUtc = x.AckedAtUtc,
+            deviceId = x.DeviceId
+        }).ToListAsync();
+    var rows = syncItems.Select(x => new Dictionary<string, object?>
+    {
+        ["incidentId"] = x.incidentId,
+        ["changeType"] = x.changeType,
+        ["scope"] = x.scope,
+        ["changedAtUtc"] = x.changedAtUtc,
+        ["ackedAtUtc"] = x.ackedAtUtc,
+        ["deviceId"] = x.deviceId
+    }).ToList();
+    return ToReportingResult("syncHealth", agencyId, request.Fields, rows, total);
+}
+
+static ReportingQueryResultDto ToReportingResult(string subjectArea, int agencyId, string[]? requestedFields, List<Dictionary<string, object?>> rows, int total)
+{
+    var available = rows.SelectMany(x => x.Keys).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    var fields = requestedFields is { Length: > 0 } ? requestedFields.Where(x => available.Contains(x, StringComparer.OrdinalIgnoreCase)).ToArray() : available;
+    var projected = rows.Select(row => new ReportingQueryRowDto(fields.ToDictionary(f => f, f => row.TryGetValue(f, out var value) ? value : null, StringComparer.OrdinalIgnoreCase))).ToArray();
+    return new ReportingQueryResultDto(subjectArea, agencyId, fields, total, projected.Length, projected, new[] { $"agencyId={agencyId}" });
+}
+
+static IQueryable<T> ApplyStringFilter<T>(IQueryable<T> query, IEnumerable<ReportingFilterDto>? filters, string field, Expression<Func<T, string?>> selector)
+{
+    foreach (var filter in (filters ?? Array.Empty<ReportingFilterDto>()).Where(x => string.Equals(x.Field, field, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(x.Value)))
+    {
+        var value = filter.Value!.Trim();
+        query = string.Equals(filter.Operator, "contains", StringComparison.OrdinalIgnoreCase)
+            ? query.Where(BuildStringContainsPredicate(selector, value))
+            : query.Where(BuildStringEqualsPredicate(selector, value));
+    }
+    return query;
+}
+
+static IQueryable<T> ApplyDateFilter<T>(IQueryable<T> query, IEnumerable<ReportingFilterDto>? filters, string field, Expression<Func<T, DateTime?>> selector)
+{
+    foreach (var filter in (filters ?? Array.Empty<ReportingFilterDto>()).Where(x => string.Equals(x.Field, field, StringComparison.OrdinalIgnoreCase) && DateTime.TryParse(x.Value, out _)))
+    {
+        var value = DateTime.Parse(filter.Value!, null, System.Globalization.DateTimeStyles.AssumeUniversal | System.Globalization.DateTimeStyles.AdjustToUniversal);
+        query = string.Equals(filter.Operator, "lte", StringComparison.OrdinalIgnoreCase)
+            ? query.Where(BuildDateLessThanOrEqualPredicate(selector, value))
+            : query.Where(BuildDateGreaterThanOrEqualPredicate(selector, value));
+    }
+    return query;
+}
+
+static IQueryable<T> ApplySort<T>(IQueryable<T> query, IEnumerable<ReportingSortDto>? sort, Expression<Func<T, DateTime?>> defaultSelector, string defaultField)
+{
+    var requested = (sort ?? Array.Empty<ReportingSortDto>()).FirstOrDefault();
+    if (requested is null || !string.Equals(requested.Field, defaultField, StringComparison.OrdinalIgnoreCase))
+        return query.OrderByDescending(defaultSelector);
+    return requested.Descending ? query.OrderByDescending(defaultSelector) : query.OrderBy(defaultSelector);
+}
+
+static Expression<Func<T, bool>> BuildStringContainsPredicate<T>(Expression<Func<T, string?>> selector, string value)
+{
+    var p = selector.Parameters[0];
+    var member = selector.Body;
+    var notNull = Expression.NotEqual(member, Expression.Constant(null, typeof(string)));
+    var contains = Expression.Call(member, typeof(string).GetMethod(nameof(string.Contains), new[] { typeof(string) })!, Expression.Constant(value));
+    return Expression.Lambda<Func<T, bool>>(Expression.AndAlso(notNull, contains), p);
+}
+
+static Expression<Func<T, bool>> BuildStringEqualsPredicate<T>(Expression<Func<T, string?>> selector, string value)
+{
+    var p = selector.Parameters[0];
+    var eq = Expression.Equal(selector.Body, Expression.Constant(value, typeof(string)));
+    return Expression.Lambda<Func<T, bool>>(eq, p);
+}
+
+static Expression<Func<T, bool>> BuildDateGreaterThanOrEqualPredicate<T>(Expression<Func<T, DateTime?>> selector, DateTime value)
+{
+    var p = selector.Parameters[0];
+    var member = selector.Body;
+    var hasValue = Expression.Property(member, nameof(Nullable<DateTime>.HasValue));
+    var gte = Expression.GreaterThanOrEqual(Expression.Property(member, nameof(Nullable<DateTime>.Value)), Expression.Constant(value));
+    return Expression.Lambda<Func<T, bool>>(Expression.AndAlso(hasValue, gte), p);
+}
+
+static Expression<Func<T, bool>> BuildDateLessThanOrEqualPredicate<T>(Expression<Func<T, DateTime?>> selector, DateTime value)
+{
+    var p = selector.Parameters[0];
+    var member = selector.Body;
+    var hasValue = Expression.Property(member, nameof(Nullable<DateTime>.HasValue));
+    var lte = Expression.LessThanOrEqual(Expression.Property(member, nameof(Nullable<DateTime>.Value)), Expression.Constant(value));
+    return Expression.Lambda<Func<T, bool>>(Expression.AndAlso(hasValue, lte), p);
+}
+
+
 public sealed class AuditMetadata
 {
     public DateTime ChangedAtUtc { get; set; }
@@ -3232,6 +4144,7 @@ public static class DeviceCommandStatuses
     public const string Failed = "failed";
     public const string Stale = "stale";
 }
+
 static class JsonUtil
 {
     public static readonly JsonSerializerOptions Options = EmergencyCallUnifiedJson.Options;

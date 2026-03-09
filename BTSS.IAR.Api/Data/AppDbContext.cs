@@ -30,6 +30,10 @@ public class AppDbContext : DbContext
     public DbSet<DeviceAgencyEntity> DeviceAgencies => Set<DeviceAgencyEntity>();
     public DbSet<DeviceSettingEntity> DeviceSettings => Set<DeviceSettingEntity>();
     public DbSet<GlobalSettingEntity> GlobalSettings => Set<GlobalSettingEntity>();
+    public DbSet<DeviceHeartbeatEntity> DeviceHeartbeats => Set<DeviceHeartbeatEntity>();
+    public DbSet<DeviceSyncStateEntity> DeviceSyncStates => Set<DeviceSyncStateEntity>();
+    public DbSet<SyncBatchEntity> SyncBatches => Set<SyncBatchEntity>();
+    public DbSet<SyncErrorEntity> SyncErrors => Set<SyncErrorEntity>();
     public DbSet<StatusNormalizationRuleEntity> StatusNormalizationRules => Set<StatusNormalizationRuleEntity>();
     public DbSet<SavedReportEntity> SavedReports => Set<SavedReportEntity>();
     public DbSet<ReportDefinitionEntity> ReportDefinitions => Set<ReportDefinitionEntity>();
@@ -191,6 +195,42 @@ public class AppDbContext : DbContext
         {
             entity.HasIndex(x => x.AgencyId).IsUnique();
             entity.Property(x => x.SettingsJson).HasColumnType("nvarchar(max)");
+        });
+
+        modelBuilder.Entity<DeviceHeartbeatEntity>(entity =>
+        {
+            entity.HasIndex(x => new { x.DeviceId, x.ReceivedAtUtc });
+            entity.Property(x => x.DeviceId).HasMaxLength(128);
+            entity.Property(x => x.Status).HasMaxLength(64);
+            entity.Property(x => x.Message).HasColumnType("nvarchar(max)");
+            entity.Property(x => x.PayloadJson).HasColumnType("nvarchar(max)");
+        });
+        modelBuilder.Entity<DeviceSyncStateEntity>(entity =>
+        {
+            entity.HasIndex(x => new { x.DeviceId, x.AgencyId }).IsUnique();
+            entity.Property(x => x.DeviceId).HasMaxLength(128);
+            entity.Property(x => x.LastBatchId).HasMaxLength(64);
+            entity.Property(x => x.ConflictPolicy).HasMaxLength(64);
+            entity.Property(x => x.StateJson).HasColumnType("nvarchar(max)");
+        });
+        modelBuilder.Entity<SyncBatchEntity>(entity =>
+        {
+            entity.HasIndex(x => x.BatchId).IsUnique();
+            entity.HasIndex(x => new { x.DeviceId, x.StartedAtUtc });
+            entity.Property(x => x.BatchId).HasMaxLength(64);
+            entity.Property(x => x.DeviceId).HasMaxLength(128);
+            entity.Property(x => x.Direction).HasMaxLength(16);
+            entity.Property(x => x.Status).HasMaxLength(32);
+            entity.Property(x => x.Notes).HasColumnType("nvarchar(max)");
+        });
+        modelBuilder.Entity<SyncErrorEntity>(entity =>
+        {
+            entity.HasIndex(x => new { x.DeviceId, x.CreatedAtUtc });
+            entity.Property(x => x.DeviceId).HasMaxLength(128);
+            entity.Property(x => x.Scope).HasMaxLength(64);
+            entity.Property(x => x.ErrorCode).HasMaxLength(64);
+            entity.Property(x => x.Message).HasColumnType("nvarchar(max)");
+            entity.Property(x => x.PayloadJson).HasColumnType("nvarchar(max)");
         });
 
         modelBuilder.Entity<StatusNormalizationRuleEntity>(entity =>

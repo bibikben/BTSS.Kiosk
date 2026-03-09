@@ -60,9 +60,22 @@ builder.Services.AddHttpClient<IncidentPollingClient>((sp, client) =>
     client.Timeout = TimeSpan.FromSeconds(Math.Max(15, runtime.HttpTimeoutSeconds));
 });
 
+builder.Services.AddHttpClient<DeviceSyncClient>((sp, client) =>
+{
+    var runtime = sp.GetRequiredService<IOptions<ServiceRuntimeOptions>>().Value;
+
+    if (!string.IsNullOrWhiteSpace(runtime.ApiBaseUrl))
+    {
+        client.BaseAddress = new Uri(runtime.ApiBaseUrl, UriKind.Absolute);
+    }
+
+    client.Timeout = TimeSpan.FromSeconds(Math.Max(15, runtime.HttpTimeoutSeconds));
+});
+
 builder.Services.AddScoped<IncidentStore>();
 builder.Services.AddSingleton<PrintTemplateRenderer>();
 builder.Services.AddScoped<PrintJobWriter>();
+builder.Services.AddScoped<LocalSyncStore>();
 builder.Services.AddScoped<IPrintDispatcher, PrintDispatcher>();
 builder.Services.AddHostedService<CallPollingWorker>();
 

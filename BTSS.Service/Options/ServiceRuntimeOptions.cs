@@ -12,6 +12,16 @@ public sealed class ServiceRuntimeOptions
     [Required]
     public string IncidentFeedPath { get; set; } = "/api/service/incidents";
 
+    public string DeviceRegisterPath { get; set; } = "/api/device/register";
+
+    public string DeviceHeartbeatPath { get; set; } = "/api/device/heartbeat";
+
+    public string SyncBootstrapPath { get; set; } = "/api/sync/bootstrap";
+
+    public string SyncChangesPath { get; set; } = "/api/sync/changes";
+
+    public string SyncAckPath { get; set; } = "/api/sync/ack";
+
     public string? OAuthTokenPath { get; set; } = "/connect/token";
 
     public string? ClientId { get; set; }
@@ -46,11 +56,22 @@ public sealed class ServiceRuntimeOptions
 
     public bool EnableShellPrinting { get; set; }
 
+    public string? DeviceId { get; set; }
+
+    public string? DeviceName { get; set; }
+
+    public string MachineName { get; set; } = Environment.MachineName;
+
+    public string DeviceType { get; set; } = "service";
+
     public string ResolveDatabasePath() => Path.Combine(LocalDataDirectory, DatabaseFileName);
 
     public string ResolvePrintOutputDirectory() => Path.Combine(LocalDataDirectory, PrintOutputDirectory);
 
     public string ResolveHealthLogDirectory() => Path.Combine(LocalDataDirectory, HealthLogDirectory);
+
+    public string ResolveDeviceId()
+        => string.IsNullOrWhiteSpace(DeviceId) ? MachineName : DeviceId!;
 
     public bool Validate(out string error)
     {

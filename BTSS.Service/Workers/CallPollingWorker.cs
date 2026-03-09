@@ -26,9 +26,43 @@ public sealed class CallPollingWorker(
             {
                 using var scope = scopeFactory.CreateScope();
                 var pollingClient = scope.ServiceProvider.GetRequiredService<IncidentPollingClient>();
+                var syncClient = scope.ServiceProvider.GetRequiredService<DeviceSyncClient>();
                 var store = scope.ServiceProvider.GetRequiredService<IncidentStore>();
+                var localSync = scope.ServiceProvider.GetRequiredService<LocalSyncStore>();
                 var writer = scope.ServiceProvider.GetRequiredService<PrintJobWriter>();
                 var dispatcher = scope.ServiceProvider.GetRequiredService<IPrintDispatcher>();
+
+                await syncClient.RegisterDeviceAsync(stoppingToken);
+                await syncClient.SendHeartbeatAsync("running", "poll cycle starting", stoppingToken);
+
+                var lastChange = await localSync.GetLastChangeUtcAsync(_options.ResolveDeviceId(), stoppingToken);
+                if (!lastChange.HasValue)
+                {
+                    var bootstrap = await syncClient.BootstrapAsync(null, stoppingToken);
+                    if (bootstrap is not null)
+                        await localSync.ApplyBootstrapAsync(_options.ResolveDeviceId(), bootstrap, stoppingToken);
+                }
+                else
+                {
+                    var delta = await syncClient.GetChangesAsync(lastChange, stoppingToken);
+                    if (delta is not null)
+                    {
+                        await localSync.ApplyChangesAsync(_options.ResolveDeviceId(), delta, stoppingToken);
+                        var ids = delta.Changes.Select(x => x.SyncLogId).ToArray();
+                        if (ids.Length > 0)
+                        {
+                            await syncClient.AckAsync(new SyncAckEnvelope
+                            {
+                                DeviceId = _options.ResolveDeviceId(),
+                                BatchId = delta.BatchId,
+                                SyncLogIds = ids,
+                                LastSyncLogId = ids.Max(),
+                                Notes = "service-sync"
+                            }, stoppingToken);
+                            await localSync.MarkAckAsync(_options.ResolveDeviceId(), delta.BatchId, ids.Max(), stoppingToken);
+                        }
+                    }
+                }
 
                 var result = await pollingClient.PollAsync(stoppingToken);
                 if (result.HttpStatusCode is < 200 or >= 300)
@@ -79,6 +113,7 @@ public sealed class CallPollingWorker(
                     PayloadBytes = result.PayloadBytes,
                     Endpoint = result.Endpoint
                 }, stoppingToken);
+                await syncClient.SendHeartbeatAsync("ok", $"poll ok: {result.Incidents.Count} incidents", stoppingToken);
                 await WriteHealthFileAsync($"poll ok: {result.Incidents.Count} incidents", stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -89,6 +124,13 @@ public sealed class CallPollingWorker(
             {
                 _consecutiveFailures++;
                 logger.LogError(ex, "Call polling cycle failed.");
+                try
+                {
+                    using var scope = scopeFactory.CreateScope();
+                    var syncClient = scope.ServiceProvider.GetRequiredService<DeviceSyncClient>();
+                    await syncClient.SendHeartbeatAsync("error", ex.Message, stoppingToken);
+                }
+                catch { }
                 await WriteHealthFileAsync($"poll exception: {ex.Message}", stoppingToken);
             }
 
