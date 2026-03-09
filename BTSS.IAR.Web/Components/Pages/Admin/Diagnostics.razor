@@ -1,25 +1,72 @@
 @page "/admin/diagnostics"
+@using System.Text.Json.Nodes
+@using BTSS.IAR.Api.Auth
 @inject HttpClient Http
 
 <PageTitle>Diagnostics</PageTitle>
 
-<RadzenTabs>
-    <RadzenTabsItem Text="Snapshot">
-        <pre>@json</pre>
-    </RadzenTabsItem>
-    <RadzenTabsItem Text="Status Codes">
-        <RadzenDataGrid Data="statuses" TItem="StatusCodeLookupDto">
-            <Columns>
-                <RadzenDataGridColumn TItem="StatusCodeLookupDto" Property="RawCode" Title="Raw" />
-                <RadzenDataGridColumn TItem="StatusCodeLookupDto" Property="NormalizedCode" Title="Normalized" />
-                <RadzenDataGridColumn TItem="StatusCodeLookupDto" Property="Description" Title="Description" />
-            </Columns>
-        </RadzenDataGrid>
-    </RadzenTabsItem>
-</RadzenTabs>
+<RadzenStack Gap="1rem">
+    @if (masked)
+    {
+        <RadzenAlert AlertStyle="AlertStyle.Info" Variant="Variant.Flat" ShowIcon="true">
+            Sensitive client and device identifiers are masked for this account.
+        </RadzenAlert>
+    }
+
+    <RadzenRow Gap="1rem">
+        <RadzenColumn Size="12" SizeMD="4">
+            <RadzenCard>
+                <RadzenText TextStyle="TextStyle.Subtitle2">Recent sync items</RadzenText>
+                <RadzenText TextStyle="TextStyle.H5">@recentSyncCount</RadzenText>
+            </RadzenCard>
+        </RadzenColumn>
+        <RadzenColumn Size="12" SizeMD="4">
+            <RadzenCard>
+                <RadzenText TextStyle="TextStyle.Subtitle2">API clients</RadzenText>
+                <RadzenText TextStyle="TextStyle.H5">@clientCount</RadzenText>
+            </RadzenCard>
+        </RadzenColumn>
+        <RadzenColumn Size="12" SizeMD="4">
+            <RadzenCard>
+                <RadzenText TextStyle="TextStyle.Subtitle2">Devices</RadzenText>
+                <RadzenText TextStyle="TextStyle.H5">@deviceCount</RadzenText>
+            </RadzenCard>
+        </RadzenColumn>
+    </RadzenRow>
+
+    <RadzenTabs>
+        <RadzenTabsItem Text="Snapshot">
+            <pre>@json</pre>
+        </RadzenTabsItem>
+        <RadzenTabsItem Text="Status Codes">
+            <RadzenDataGrid Data="statuses" TItem="StatusCodeLookupDto">
+                <Columns>
+                    <RadzenDataGridColumn TItem="StatusCodeLookupDto" Property="RawCode" Title="Raw" />
+                    <RadzenDataGridColumn TItem="StatusCodeLookupDto" Property="NormalizedCode" Title="Normalized" />
+                    <RadzenDataGridColumn TItem="StatusCodeLookupDto" Property="Description" Title="Description" />
+                </Columns>
+            </RadzenDataGrid>
+        </RadzenTabsItem>
+    </RadzenTabs>
+</RadzenStack>
 
 @code {
     private string json = string.Empty;
+    private bool masked;
+    private int recentSyncCount;
+    private int clientCount;
+    private int deviceCount;
     private List<StatusCodeLookupDto> statuses = new();
-    protected override async Task OnInitializedAsync() { json = await Http.GetStringAsync("/admin/diagnostics"); statuses = await Http.GetFromJsonAsync<List<StatusCodeLookupDto>>("/api/lookups/status-codes") ?? new(); }
+
+    protected override async Task OnInitializedAsync()
+    {
+        json = await Http.GetStringAsync("/admin/diagnostics");
+        statuses = await Http.GetFromJsonAsync<List<StatusCodeLookupDto>>("/api/lookups/status-codes") ?? new();
+
+        var node = JsonNode.Parse(json)?.AsObject();
+        masked = node?["sensitiveValuesMasked"]?.GetValue<bool>() ?? false;
+        recentSyncCount = node?["recentSync"]?.AsArray().Count ?? 0;
+        clientCount = node?["clients"]?.AsArray().Count ?? 0;
+        deviceCount = node?["devices"]?.AsArray().Count ?? 0;
+    }
 }

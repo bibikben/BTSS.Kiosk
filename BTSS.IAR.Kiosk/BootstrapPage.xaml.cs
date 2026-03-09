@@ -269,10 +269,12 @@ public partial class BootstrapPage : ContentPage
 
     private string BuildDiagnosticsText(DeviceResolvedConfigurationDto? config, string? error = null)
     {
+        var canViewSensitive = CanViewSensitiveDiagnostics();
         var lines = new List<string>
         {
-            $"Saved API base URL: {AppSettings.IarApiBaseUrl}",
-            $"Saved client ID: {AppSettings.IarApiClientId}",
+            $"Saved API base URL: {(canViewSensitive ? AppSettings.IarApiBaseUrl : MaskValue(AppSettings.IarApiBaseUrl))}",
+            $"Saved client ID: {(canViewSensitive ? AppSettings.IarApiClientId : MaskValue(AppSettings.IarApiClientId))}",
+            $"Saved client secret: {(canViewSensitive ? MaskSecret(AppSettings.IarApiClientSecret) : "Hidden")}",
             $"Saved startup URL: {AppSettings.SavedUrl}",
             $"Selected monitor index: {AppSettings.SelectedMonitorIndex}",
             $"Saved default printer: {AppSettings.DefaultPrinterName}",
@@ -290,9 +292,9 @@ public partial class BootstrapPage : ContentPage
 
         if (config is not null)
         {
-            lines.Add($"Resolved API client id: {config.ApiClientId}");
+            lines.Add($"Resolved API client id: {(canViewSensitive ? config.ApiClientId.ToString() : MaskValue(config.ApiClientId.ToString()))}");
             lines.Add($"Resolved agency id: {config.AgencyId}");
-            lines.Add($"Resolved device id: {config.DeviceId}");
+            lines.Add($"Resolved device id: {(canViewSensitive ? config.DeviceId : MaskValue(config.DeviceId))}");
             lines.Add($"Resolved startup URL: {config.ResolveStartupUrl() ?? "(none)"}");
             lines.Add($"Resolved monitor index: {(config.ResolveMonitorIndex()?.ToString() ?? "(none)")}");
         }
@@ -300,7 +302,36 @@ public partial class BootstrapPage : ContentPage
         if (!string.IsNullOrWhiteSpace(error))
             lines.Add($"Last error: {error}");
 
+        if (!canViewSensitive)
+            lines.Add("Sensitive API values are hidden. Super users and diagnostics admins can view full identifiers.");
+
         return string.Join(Environment.NewLine, lines);
+    }
+
+    private bool CanViewSensitiveDiagnostics()
+    {
+        var session = AdminAuth.CurrentSession;
+        return session?.IsSuperUser == true || session?.Permissions.Any(x => string.Equals(x, "admin.diagnostics", StringComparison.OrdinalIgnoreCase)) == true;
+    }
+
+    private static string MaskValue(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return "(none)";
+
+        var trimmed = value.Trim();
+        if (trimmed.Length <= 4)
+            return new string('*', trimmed.Length);
+
+        return $"{trimmed[..2]}***{trimmed[^2..]}";
+    }
+
+    private static string MaskSecret(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return "(none)";
+
+        return $"{new string('*', Math.Max(4, value.Length - 4))}{value[^4..]}";
     }
 
     private void BindAgencyPicker(KioskAdminSessionDto session)

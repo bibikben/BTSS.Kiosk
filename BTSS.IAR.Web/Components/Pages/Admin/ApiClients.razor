@@ -1,0 +1,182 @@
+@page "/admin/api-clients"
+@using BTSS.IAR.Api.Auth
+@using BTSS.IAR.Api.Models
+@inject HttpClient Http
+
+<PageTitle>API Clients</PageTitle>
+
+<RadzenStack Gap="1rem">
+    <RadzenRow AlignItems="AlignItems.Center" JustifyContent="JustifyContent.SpaceBetween">
+        <RadzenColumn Size="12" SizeMD="7">
+            <RadzenText TextStyle="TextStyle.H5">Machine OAuth clients</RadzenText>
+            <RadzenText TextStyle="TextStyle.Body2">Create client credentials, assign scopes, and rotate secrets.</RadzenText>
+        </RadzenColumn>
+        <RadzenColumn Size="12" SizeMD="5">
+            <RadzenStack Orientation="Orientation.Horizontal" Gap="0.5rem" JustifyContent="JustifyContent.End">
+                <RadzenTextBox @bind-Value="filterText" Placeholder="Filter clients" Style="width:220px" />
+                <RadzenButton Text="New client" Icon="add" Click="NewClient" />
+            </RadzenStack>
+        </RadzenColumn>
+    </RadzenRow>
+
+    @if (!string.IsNullOrWhiteSpace(lastIssuedSecret))
+    {
+        <RadzenAlert AlertStyle="AlertStyle.Warning" Variant="Variant.Flat" ShowIcon="true">
+            <div><strong>Issued secret:</strong> <code>@lastIssuedSecret</code></div>
+            <div>Copy it now. This value is only returned when created or rotated.</div>
+        </RadzenAlert>
+    }
+
+    <RadzenDataGrid Data="FilteredClients" TItem="ApiClientAdminDto" AllowPaging="true" PageSize="10" RowSelect="EditClient">
+        <Columns>
+            <RadzenDataGridColumn TItem="ApiClientAdminDto" Property="Name" Title="Name" />
+            <RadzenDataGridColumn TItem="ApiClientAdminDto" Property="ClientId" Title="Client ID" />
+            <RadzenDataGridColumn TItem="ApiClientAdminDto" Property="AgencyName" Title="Agency" />
+            <RadzenDataGridColumn TItem="ApiClientAdminDto" Title="Scopes">
+                <Template Context="client">@string.Join(", ", client.AllowedScopes)</Template>
+            </RadzenDataGridColumn>
+            <RadzenDataGridColumn TItem="ApiClientAdminDto" Title="Secret">
+                <Template Context="client">v@(client.ClientSecretVersion) @if (client.SensitiveValuesMasked) { <span>(masked)</span> }</Template>
+            </RadzenDataGridColumn>
+            <RadzenDataGridColumn TItem="ApiClientAdminDto" Title="Enabled" Width="100px">
+                <Template Context="client">@(client.IsEnabled ? "Yes" : "No")</Template>
+            </RadzenDataGridColumn>
+        </Columns>
+    </RadzenDataGrid>
+
+    @if (editing is not null)
+    {
+        <RadzenCard>
+            <RadzenStack Gap="1rem">
+                <RadzenText TextStyle="TextStyle.H6">@(editing.Id == 0 ? "New API client" : $"Edit {editing.Name}")</RadzenText>
+                <RadzenRow Gap="1rem">
+                    <RadzenColumn Size="12" SizeMD="6">
+                        <RadzenLabel Text="Display name" />
+                        <RadzenTextBox @bind-Value="editing.Name" Style="width:100%" />
+                    </RadzenColumn>
+                    <RadzenColumn Size="12" SizeMD="6">
+                        <RadzenLabel Text="Client ID" />
+                        <RadzenTextBox @bind-Value="editing.ClientId" Style="width:100%" />
+                    </RadzenColumn>
+                    <RadzenColumn Size="12" SizeMD="6">
+                        <RadzenLabel Text="Agency" />
+                        <RadzenDropDown Data="agencies" TextProperty="Name" ValueProperty="Id" @bind-Value="editing.AgencyId" Style="width:100%" />
+                    </RadzenColumn>
+                    <RadzenColumn Size="12" SizeMD="6">
+                        <RadzenCheckBox @bind-Value="editing.IsEnabled" /> <span>Enabled</span>
+                    </RadzenColumn>
+                    <RadzenColumn Size="12">
+                        <RadzenLabel Text="Allowed scopes" />
+                        <RadzenDropDown Data="scopes" Multiple="true" Chips="true" TextProperty="Code" ValueProperty="Code" @bind-Value="selectedScopes" Style="width:100%" />
+                    </RadzenColumn>
+                    <RadzenColumn Size="12" SizeMD="6">
+                        <RadzenCheckBox @bind-Value="editing.RotateSecret" /> <span>Rotate secret on save</span>
+                    </RadzenColumn>
+                    <RadzenColumn Size="12" SizeMD="6">
+                        <RadzenLabel Text="Optional custom secret" />
+                        <RadzenTextBox @bind-Value="editing.ClientSecret" Style="width:100%" />
+                    </RadzenColumn>
+                </RadzenRow>
+                <RadzenStack Orientation="Orientation.Horizontal" Gap="0.5rem">
+                    <RadzenButton Text="Save" Icon="save" Click="SaveAsync" />
+                    <RadzenButton Text="Cancel" Variant="Variant.Outlined" Click="(() => editing = null)" />
+                </RadzenStack>
+            </RadzenStack>
+        </RadzenCard>
+    }
+</RadzenStack>
+
+@code {
+    private List<ApiClientAdminDto> clients = new();
+    private List<AgencyListItem> agencies = new();
+    private List<ScopeLookupDto> scopes = new();
+    private EditableApiClient? editing;
+    private IEnumerable<string> selectedScopes = Array.Empty<string>();
+    private string filterText = string.Empty;
+    private string? lastIssuedSecret;
+
+    private List<ApiClientAdminDto> FilteredClients => clients
+        .Where(x => string.IsNullOrWhiteSpace(filterText)
+            || x.Name.Contains(filterText, StringComparison.OrdinalIgnoreCase)
+            || x.ClientId.Contains(filterText, StringComparison.OrdinalIgnoreCase)
+            || (x.AgencyName?.Contains(filterText, StringComparison.OrdinalIgnoreCase) ?? false))
+        .OrderBy(x => x.Name)
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+        agencies = await Http.GetFromJsonAsync<List<AgencyListItem>>("/api/lookups/agencies") ?? new();
+        scopes = await Http.GetFromJsonAsync<List<ScopeLookupDto>>("/api/lookups/scopes") ?? new();
+    }
+
+    private async Task ReloadAsync()
+        => clients = await Http.GetFromJsonAsync<List<ApiClientAdminDto>>("/admin/api-clients") ?? new();
+
+    private void NewClient()
+    {
+        editing = new EditableApiClient { IsEnabled = true };
+        selectedScopes = Array.Empty<string>();
+        lastIssuedSecret = null;
+    }
+
+    private void EditClient(ApiClientAdminDto client)
+    {
+        editing = new EditableApiClient
+        {
+            Id = client.Id,
+            Name = client.Name,
+            ClientId = client.ClientId,
+            AgencyId = client.AgencyId,
+            IsEnabled = client.IsEnabled
+        };
+        selectedScopes = client.AllowedScopes;
+        lastIssuedSecret = null;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (editing is null)
+            return;
+
+        var req = new ApiClientUpsertRequest
+        {
+            ClientId = editing.ClientId ?? string.Empty,
+            Name = editing.Name ?? string.Empty,
+            AgencyId = editing.AgencyId,
+            IsEnabled = editing.IsEnabled,
+            AllowedScopes = selectedScopes.ToArray(),
+            ClientSecret = editing.ClientSecret,
+            RotateSecret = editing.RotateSecret
+        };
+        HttpResponseMessage resp = editing.Id == 0
+            ? await Http.PostAsJsonAsync("/admin/api-clients", req)
+            : await Http.PutAsJsonAsync($"/admin/api-clients/{editing.Id}", req);
+
+        if (!resp.IsSuccessStatusCode)
+            return;
+
+        var payload = await resp.Content.ReadFromJsonAsync<ApiClientAdminUpsertResultDto>();
+        lastIssuedSecret = payload?.IssuedClientSecret;
+        editing = null;
+        await ReloadAsync();
+    }
+
+    private sealed class EditableApiClient
+    {
+        public int Id { get; set; }
+        public string? Name { get; set; }
+        public string? ClientId { get; set; }
+        public int AgencyId { get; set; }
+        public bool IsEnabled { get; set; }
+        public bool RotateSecret { get; set; }
+        public string? ClientSecret { get; set; }
+    }
+
+    private sealed class AgencyListItem
+    {
+        public int Id { get; set; }
+        public string Code { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+    }
+}

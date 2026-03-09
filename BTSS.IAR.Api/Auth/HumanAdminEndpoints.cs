@@ -1,7 +1,9 @@
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using BTSS.IAR.Api.Data;
+using BTSS.IAR.Api.Models;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
@@ -249,6 +251,74 @@ public static class HumanAdminEndpointExtensions
                 TryParseJson(settings.FirstOrDefault(x => x.DeviceId == d.DeviceId)?.SettingsJson), clients.GetValueOrDefault(d.ApiClientId), agencies.GetValueOrDefault(d.AgencyId))));
         }).RequireAuthorization();
 
+        app.MapGet("/admin/api-clients", async (HttpContext http, AppDbContext db, CancellationToken ct) =>
+        {
+            if (!HasPermission(http.User, PermissionCatalog.AdminApiClients)) return Results.Forbid();
+            var agencies = await db.Agencies.ToDictionaryAsync(x => x.Id, x => x.Name, ct);
+            var canViewSensitive = CanViewSensitiveDiagnostics(http.User);
+            var items = await db.ApiClients
+                .OrderBy(x => x.Name)
+                .ThenBy(x => x.ClientId)
+                .ToListAsync(ct);
+
+            return Results.Ok(items.Select(x => ToApiClientAdminDto(x, agencies.GetValueOrDefault(x.AgencyId), !canViewSensitive)));
+        }).RequireAuthorization();
+
+        app.MapPost("/admin/api-clients", async (HttpContext http, AppDbContext db, ApiClientUpsertRequest req, CancellationToken ct) =>
+        {
+            if (!HasPermission(http.User, PermissionCatalog.AdminApiClients)) return Results.Forbid();
+            if (string.IsNullOrWhiteSpace(req.ClientId) || string.IsNullOrWhiteSpace(req.Name) || req.AgencyId <= 0)
+                return Results.BadRequest(new { message = "Client id, name, and agency are required." });
+            if (await db.ApiClients.AnyAsync(x => x.ClientId == req.ClientId.Trim(), ct))
+                return Results.Conflict(new { message = "Client id already exists." });
+
+            var issuedSecret = string.IsNullOrWhiteSpace(req.ClientSecret) ? GenerateClientSecret() : req.ClientSecret!.Trim();
+            var client = new ApiClient
+            {
+                ClientId = req.ClientId.Trim(),
+                Name = req.Name.Trim(),
+                AgencyId = req.AgencyId,
+                IsEnabled = req.IsEnabled,
+                AllowedScopesJson = JsonSerializer.Serialize(NormalizeScopes(req.AllowedScopes)),
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow
+            };
+            client.SetClientSecret(issuedSecret);
+            db.ApiClients.Add(client);
+            await db.SaveChangesAsync(ct);
+            var agencyName = await db.Agencies.Where(x => x.Id == client.AgencyId).Select(x => x.Name).FirstOrDefaultAsync(ct);
+            return Results.Ok(new ApiClientAdminUpsertResultDto(ToApiClientAdminDto(client, agencyName, false), issuedSecret));
+        }).RequireAuthorization();
+
+        app.MapPut("/admin/api-clients/{id:int}", async (HttpContext http, AppDbContext db, int id, ApiClientUpsertRequest req, CancellationToken ct) =>
+        {
+            if (!HasPermission(http.User, PermissionCatalog.AdminApiClients)) return Results.Forbid();
+            var client = await db.ApiClients.FirstOrDefaultAsync(x => x.Id == id, ct);
+            if (client is null) return Results.NotFound();
+            var normalizedClientId = req.ClientId.Trim();
+            if (string.IsNullOrWhiteSpace(normalizedClientId) || string.IsNullOrWhiteSpace(req.Name) || req.AgencyId <= 0)
+                return Results.BadRequest(new { message = "Client id, name, and agency are required." });
+            if (await db.ApiClients.AnyAsync(x => x.Id != id && x.ClientId == normalizedClientId, ct))
+                return Results.Conflict(new { message = "Client id already exists." });
+
+            client.ClientId = normalizedClientId;
+            client.Name = req.Name.Trim();
+            client.AgencyId = req.AgencyId;
+            client.IsEnabled = req.IsEnabled;
+            client.AllowedScopesJson = JsonSerializer.Serialize(NormalizeScopes(req.AllowedScopes));
+            client.UpdatedAtUtc = DateTime.UtcNow;
+
+            string? issuedSecret = null;
+            if (req.RotateSecret || !string.IsNullOrWhiteSpace(req.ClientSecret))
+            {
+                issuedSecret = string.IsNullOrWhiteSpace(req.ClientSecret) ? GenerateClientSecret() : req.ClientSecret!.Trim();
+                client.SetClientSecret(issuedSecret);
+            }
+
+            await db.SaveChangesAsync(ct);
+            var agencyName = await db.Agencies.Where(x => x.Id == client.AgencyId).Select(x => x.Name).FirstOrDefaultAsync(ct);
+            return Results.Ok(new ApiClientAdminUpsertResultDto(ToApiClientAdminDto(client, agencyName, false), issuedSecret));
+        }).RequireAuthorization();
         app.MapGet("/admin/settings", async (HttpContext http, AppDbContext db, CancellationToken ct) =>
         {
             if (!HasPermission(http.User, PermissionCatalog.AdminSettings)) return Results.Forbid();
@@ -282,12 +352,37 @@ public static class HumanAdminEndpointExtensions
         {
             if (!HasPermission(http.User, PermissionCatalog.AdminDiagnostics)) return Results.Forbid();
             var activeAgencyId = GetActiveAgencyId(http.User);
+            var canViewSensitive = CanViewSensitiveDiagnostics(http.User);
             var sync = db.IncidentSyncLog.AsQueryable();
             if (activeAgencyId.HasValue) sync = sync.Where(x => x.AgencyId == activeAgencyId.Value);
-            var recentSync = await sync.OrderByDescending(x => x.ChangedAtUtc).Take(50).Select(x => new { x.Id, x.IncidentId, x.AgencyId, x.Scope, x.ChangeType, x.ChangedAtUtc, x.AckedAtUtc, x.DeviceId, x.Notes }).ToListAsync(ct);
-            var clients = await db.ApiClients.OrderBy(x => x.Name).Select(x => new { x.Id, x.ClientId, x.Name, x.AgencyId, x.IsEnabled, x.ClientSecretVersion, x.ClientSecretRotatedAtUtc, x.UpdatedAtUtc, Scopes = x.AllowedScopes }).ToListAsync(ct);
-            var devices = await db.Devices.OrderByDescending(x => x.UpdatedAtUtc).Take(50).Select(x => new { x.Id, x.DeviceId, x.DeviceName, x.MachineName, x.DeviceType, x.AgencyId, x.IsEnabled, x.UpdatedAtUtc }).ToListAsync(ct);
-            return Results.Ok(new { activeAgencyId, recentSync, clients, devices });
+            var recentSync = await sync.OrderByDescending(x => x.ChangedAtUtc).Take(50).Select(x => new
+            {
+                x.Id,
+                x.IncidentId,
+                x.AgencyId,
+                x.Scope,
+                x.ChangeType,
+                x.ChangedAtUtc,
+                x.AckedAtUtc,
+                DeviceId = canViewSensitive ? x.DeviceId : MaskValue(x.DeviceId),
+                Notes = canViewSensitive ? x.Notes : MaskFreeText(x.Notes)
+            }).ToListAsync(ct);
+            var agencies = await db.Agencies.ToDictionaryAsync(x => x.Id, x => x.Name, ct);
+            var clients = (await db.ApiClients.OrderBy(x => x.Name).ToListAsync(ct))
+                .Select(x => (object)ToApiClientAdminDto(x, agencies.GetValueOrDefault(x.AgencyId), !canViewSensitive))
+                .ToArray();
+            var devices = await db.Devices.OrderByDescending(x => x.UpdatedAtUtc).Take(50).Select(x => new
+            {
+                x.Id,
+                DeviceId = canViewSensitive ? x.DeviceId : MaskValue(x.DeviceId),
+                x.DeviceName,
+                MachineName = canViewSensitive ? x.MachineName : MaskValue(x.MachineName),
+                x.DeviceType,
+                x.AgencyId,
+                x.IsEnabled,
+                x.UpdatedAtUtc
+            }).ToListAsync(ct);
+            return Results.Ok(new DiagnosticsEnvelopeDto(activeAgencyId, !canViewSensitive, recentSync.Cast<object>().ToArray(), clients, devices.Cast<object>().ToArray()));
         }).RequireAuthorization();
 
         return app;
@@ -344,6 +439,47 @@ public static class HumanAdminEndpointExtensions
         return int.TryParse(claim, out var value) ? value : null;
     }
 
+    private static ApiClientAdminDto ToApiClientAdminDto(ApiClient client, string? agencyName, bool maskSensitive)
+        => new(
+            client.Id,
+            client.AgencyId,
+            maskSensitive ? MaskValue(client.ClientId) : client.ClientId,
+            client.Name,
+            client.IsEnabled,
+            client.AllowedScopes.OrderBy(x => x).ToArray(),
+            client.ClientSecretVersion,
+            client.ClientSecretRotatedAtUtc,
+            client.UpdatedAtUtc,
+            agencyName,
+            maskSensitive);
+
+    private static string[] NormalizeScopes(IEnumerable<string>? scopes)
+        => (scopes ?? Array.Empty<string>())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x)
+            .ToArray();
+
+    private static string GenerateClientSecret()
+        => Convert.ToBase64String(RandomNumberGenerator.GetBytes(24)).Replace("+", "A").Replace("/", "B");
+
+    private static bool CanViewSensitiveDiagnostics(ClaimsPrincipal user)
+        => user.Claims.Any(x => x.Type == "is_super_user" && x.Value == "true") || user.IsInRole(RoleCatalog.SuperUser) || user.Claims.Any(x => x.Type == "permission" && x.Value.Equals(PermissionCatalog.AdminDiagnostics, StringComparison.OrdinalIgnoreCase));
+
+    private static string MaskValue(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "(none)";
+        var trimmed = value.Trim();
+        if (trimmed.Length <= 4) return new string('*', trimmed.Length);
+        return $"{trimmed[..2]}***{trimmed[^2..]}";
+    }
+
+    private static string? MaskFreeText(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return value;
+        return "Sensitive details hidden for this account.";
+    }
     private static bool HasPermission(ClaimsPrincipal user, params string[] codes)
         => user.Identity?.IsAuthenticated == true && (user.Claims.Any(x => x.Type == "is_super_user" && x.Value == "true") || user.Claims.Any(x => x.Type == "permission" && codes.Contains(x.Value, StringComparer.OrdinalIgnoreCase)));
 }

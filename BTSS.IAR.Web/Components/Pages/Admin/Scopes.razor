@@ -1,14 +1,53 @@
 @page "/admin/scopes"
+@using BTSS.IAR.Api.Auth
 @inject HttpClient Http
 
-<PageTitle>Scope Assignment</PageTitle>
+<PageTitle>Scope Catalog</PageTitle>
 
-<RadzenDataGrid Data="scopes" TItem="ScopeLookupDto">
-    <Columns>
-        <RadzenDataGridColumn TItem="ScopeLookupDto" Property="Category" Title="Category" />
-        <RadzenDataGridColumn TItem="ScopeLookupDto" Property="Code" Title="Scope" />
-        <RadzenDataGridColumn TItem="ScopeLookupDto" Property="Description" Title="Description" />
-    </Columns>
-</RadzenDataGrid>
+<RadzenStack Gap="1rem">
+    <RadzenRow AlignItems="AlignItems.Center" Gap="1rem">
+        <RadzenColumn Size="12" SizeMD="6">
+            <RadzenTextBox @bind-Value="filterText" Placeholder="Filter scopes or descriptions" Style="width:100%" />
+        </RadzenColumn>
+        <RadzenColumn Size="12" SizeMD="6">
+            <RadzenText TextStyle="TextStyle.Body2">@FilteredScopes.Count scope(s) shown</RadzenText>
+        </RadzenColumn>
+    </RadzenRow>
 
-@code { private List<ScopeLookupDto> scopes = new(); protected override async Task OnInitializedAsync() => scopes = await Http.GetFromJsonAsync<List<ScopeLookupDto>>("/api/lookups/scopes") ?? new(); }
+    <RadzenDataGrid Data="FilteredScopes" TItem="ScopeLookupDto" AllowPaging="true" PageSize="12">
+        <Columns>
+            <RadzenDataGridColumn TItem="ScopeLookupDto" Property="Category" Title="Category" Width="140px" />
+            <RadzenDataGridColumn TItem="ScopeLookupDto" Property="Code" Title="Scope" Width="210px" />
+            <RadzenDataGridColumn TItem="ScopeLookupDto" Title="Risk" Width="120px">
+                <Template Context="scope">
+                    <RadzenBadge Text="@GetRisk(scope.Code)" Shade="Shade.Lighter" Variant="Variant.Flat" />
+                </Template>
+            </RadzenDataGridColumn>
+            <RadzenDataGridColumn TItem="ScopeLookupDto" Property="Description" Title="Description" />
+        </Columns>
+    </RadzenDataGrid>
+</RadzenStack>
+
+@code {
+    private List<ScopeLookupDto> scopes = new();
+    private string filterText = string.Empty;
+
+    private List<ScopeLookupDto> FilteredScopes => scopes
+        .Where(x => string.IsNullOrWhiteSpace(filterText)
+            || x.Code.Contains(filterText, StringComparison.OrdinalIgnoreCase)
+            || x.Description.Contains(filterText, StringComparison.OrdinalIgnoreCase)
+            || x.Category.Contains(filterText, StringComparison.OrdinalIgnoreCase))
+        .OrderBy(x => x.Category)
+        .ThenBy(x => x.Code)
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
+        => scopes = await Http.GetFromJsonAsync<List<ScopeLookupDto>>("/api/lookups/scopes") ?? new();
+
+    private static string GetRisk(string code)
+        => code.Contains("write", StringComparison.OrdinalIgnoreCase)
+            || code.Contains("commands", StringComparison.OrdinalIgnoreCase)
+            || code.Contains("ingest", StringComparison.OrdinalIgnoreCase)
+            ? "Elevated"
+            : "Standard";
+}

@@ -50,6 +50,7 @@ public sealed class ApiClientUpsertRequest
     public bool IsEnabled { get; set; } = true;
     public string? SourceSystemCode { get; set; }
     public string[]? AllowedScopes { get; set; }
+    public bool RotateSecret { get; set; }
 }
 
 

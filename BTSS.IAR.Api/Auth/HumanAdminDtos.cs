@@ -1,5 +1,5 @@
 using System.Text.Json.Nodes;
-
+using BTSS.IAR.Api.Models;
 namespace BTSS.IAR.Api.Auth;
 
 public sealed record ScopeLookupDto(string Code, string Description, string Category);
@@ -15,3 +15,6 @@ public sealed record UserUpsertRequest(string UserName, string Email, string Dis
 public sealed record DashboardSummaryDto(int? ActiveAgencyId, int OpenIncidents, int ClosedToday, int UnitsActive, int DevicesRegistered, int OfflineIndicators, int SavedReports, int PendingSync, int Alerts);
 public sealed record DeviceAdminDto(long Id, int ApiClientId, int AgencyId, string DeviceId, string? DeviceName, string? MachineName, string? DeviceType, bool IsEnabled, DateTime UpdatedAtUtc, JsonObject? Settings, string? ClientName, string? AgencyName);
 public sealed record SettingsEnvelopeDto(int AgencyId, JsonObject Settings, DateTime? UpdatedAtUtc);
+public sealed record ApiClientAdminDto(int Id, int AgencyId, string ClientId, string Name, bool IsEnabled, string[] AllowedScopes, int ClientSecretVersion, DateTime? ClientSecretRotatedAtUtc, DateTime UpdatedAtUtc, string? AgencyName, bool SensitiveValuesMasked);
+public sealed record ApiClientAdminUpsertResultDto(ApiClientAdminDto Client, string? IssuedClientSecret);
+public sealed record DiagnosticsEnvelopeDto(int? ActiveAgencyId, bool SensitiveValuesMasked, object[] RecentSync, object[] Clients, object[] Devices);

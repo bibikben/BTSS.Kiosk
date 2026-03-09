@@ -1,7 +1,10 @@
+@using System.Security.Claims
 @inherits LayoutComponentBase
 @inject CookieThemeService CookieThemeService
 @inject HttpClient Http
 @inject NavigationManager Navigation
+@using Microsoft.AspNetCore.Components.Authorization
+
 <RadzenComponents />
 
 <RadzenLayout>
@@ -25,7 +28,7 @@
     <RadzenBody Expanded="@sidebarExpanded">
         <RadzenRow class="rz-mx-auto rz-px-4 rz-pt-2 rz-pt-md-4 rz-pt-lg-6 rz-pt-xl-12 rz-pb-2 rz-pb-lg-12" Style="max-width: 1440px;">
             <RadzenColumn Size="12">
-            @Body
+                @Body
             </RadzenColumn>
         </RadzenRow>
     </RadzenBody>
@@ -38,28 +41,78 @@
             <RadzenPanelMenuItem Text="Incidents" Path="/incidents" Icon="warning" />
             <RadzenPanelMenuItem Text="Reports" Path="/reports" Icon="assessment" />
             <RadzenPanelMenuItem Text="Saved Reports" Path="/reports/saved" Icon="bookmark" />
-            <RadzenPanelMenuItem Text="Report Designer" Path="/reports/designer" Icon="edit_note" />
-            <RadzenPanelMenuItem Text="Users" Path="/admin/users" Icon="group" />
-            <RadzenPanelMenuItem Text="Roles & Permissions" Path="/admin/roles" Icon="admin_panel_settings" />
-            <RadzenPanelMenuItem Text="Agencies" Path="/admin/agencies" Icon="business" />
-            <RadzenPanelMenuItem Text="Scope Assignment" Path="/admin/scopes" Icon="checklist" />
-            <RadzenPanelMenuItem Text="Devices" Path="/admin/devices" Icon="devices" />
-            <RadzenPanelMenuItem Text="Settings" Path="/admin/settings" Icon="settings" />
-            <RadzenPanelMenuItem Text="Diagnostics" Path="/admin/diagnostics" Icon="monitor_heart" />
+            @if (HasAnyPermission("report.design", "admin.diagnostics"))
+            {
+                <RadzenPanelMenuItem Text="Report Designer" Path="/reports/designer" Icon="edit_note" />
+            }
+            @if (HasPermission("admin.users"))
+            {
+                <RadzenPanelMenuItem Text="Users" Path="/admin/users" Icon="group" />
+                <RadzenPanelMenuItem Text="Roles & Permissions" Path="/admin/roles" Icon="admin_panel_settings" />
+            }
+            @if (HasPermission("admin.agencies"))
+            {
+                <RadzenPanelMenuItem Text="Agencies" Path="/admin/agencies" Icon="business" />
+            }
+            @if (HasPermission("admin.scopes"))
+            {
+                <RadzenPanelMenuItem Text="Scope Catalog" Path="/admin/scopes" Icon="checklist" />
+            }
+            @if (HasPermission("admin.api-clients"))
+            {
+                <RadzenPanelMenuItem Text="API Clients" Path="/admin/api-clients" Icon="vpn_key" />
+            }
+            @if (HasAnyPermission("admin.devices", "admin.diagnostics"))
+            {
+                <RadzenPanelMenuItem Text="Devices" Path="/admin/devices" Icon="devices" />
+            }
+            @if (HasPermission("admin.settings"))
+            {
+                <RadzenPanelMenuItem Text="Settings" Path="/admin/settings" Icon="settings" />
+            }
+            @if (HasPermission("admin.diagnostics"))
+            {
+                <RadzenPanelMenuItem Text="Diagnostics" Path="/admin/diagnostics" Icon="monitor_heart" />
+            }
         </RadzenPanelMenu>
         <RadzenStack AlignItems="Radzen.AlignItems.Center" Gap="0" class="rz-py-4 rz-py-lg-6" Style="padding: var(--rz-panel-menu-item-padding);">
-            <RadzenText Text="Epic 4 admin shell" TextStyle="Radzen.Blazor.TextStyle.Caption" TagName="Radzen.Blazor.TagName.P" TextAlign="Radzen.TextAlign.Center" />
+            <RadzenText Text="Epic 9 admin shell" TextStyle="Radzen.Blazor.TextStyle.Caption" TagName="Radzen.Blazor.TagName.P" TextAlign="Radzen.TextAlign.Center" />
         </RadzenStack>
     </RadzenSidebar>
 </RadzenLayout>
 
 @code {
+    [CascadingParameter] private Task<AuthenticationState>? AuthenticationStateTask { get; set; }
+
     private bool sidebarExpanded = true;
+    private ClaimsPrincipal? user;
+    private HashSet<string> permissions = new(StringComparer.OrdinalIgnoreCase);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (AuthenticationStateTask is null)
+            return;
+
+        user = (await AuthenticationStateTask).User;
+        permissions = user.Claims
+            .Where(x => x.Type == "permission")
+            .Select(x => x.Value)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
 
     void SidebarToggleClick()
     {
         sidebarExpanded = !sidebarExpanded;
     }
+
+    private bool HasPermission(string code)
+        => IsSuperUser() || permissions.Contains(code);
+
+    private bool HasAnyPermission(params string[] codes)
+        => IsSuperUser() || codes.Any(code => permissions.Contains(code));
+
+    private bool IsSuperUser()
+        => user?.Claims.Any(x => x.Type == "is_super_user" && string.Equals(x.Value, "true", StringComparison.OrdinalIgnoreCase)) == true || user?.IsInRole("SuperUser") == true;
 
     private async Task LogoutAsync()
     {
