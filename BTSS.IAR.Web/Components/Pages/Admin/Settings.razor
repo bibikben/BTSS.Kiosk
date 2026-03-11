@@ -54,7 +54,7 @@
 
     protected override async Task OnInitializedAsync()
     {
-        settings = await Http.GetFromJsonAsync<SettingsEnvelopeDto>("/admin/settings");
+        settings = await Http.GetFromJsonAsync<SettingsEnvelopeDto>("/api/admin/settings");
         json = settings?.Settings.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) ?? "{}";
         LoadGuidedFields();
     }

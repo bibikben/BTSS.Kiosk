@@ -14,6 +14,8 @@ public sealed class ServiceDbContext(DbContextOptions<ServiceDbContext> options)
     public DbSet<LocalUnitTimelineFactEntity> LocalUnitTimelineFacts => Set<LocalUnitTimelineFactEntity>();
     public DbSet<LocalSyncStateEntity> LocalSyncStates => Set<LocalSyncStateEntity>();
     public DbSet<LocalOutboxEntity> LocalOutbox => Set<LocalOutboxEntity>();
+    public DbSet<SftpImportFileEntity> SftpImportFiles => Set<SftpImportFileEntity>();
+    public DbSet<SftpImportIncidentEntity> SftpImportIncidents => Set<SftpImportIncidentEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -84,6 +86,22 @@ public sealed class ServiceDbContext(DbContextOptions<ServiceDbContext> options)
             entity.Property(x => x.ErrorCode).HasMaxLength(64);
             entity.Property(x => x.Message).HasColumnType("TEXT");
             entity.Property(x => x.PayloadJson).HasColumnType("TEXT");
+        });
+        modelBuilder.Entity<SftpImportFileEntity>(entity =>
+        {
+            entity.HasIndex(x => x.RemotePath).IsUnique();
+            entity.HasIndex(x => new { x.Status, x.LastSeenUtc });
+            entity.Property(x => x.RemotePath).HasMaxLength(1024);
+            entity.Property(x => x.FileName).HasMaxLength(260);
+            entity.Property(x => x.ContentHash).HasMaxLength(128);
+            entity.Property(x => x.Status).HasMaxLength(32);
+            entity.Property(x => x.Error).HasColumnType("TEXT");
+        });
+        modelBuilder.Entity<SftpImportIncidentEntity>(entity =>
+        {
+            entity.HasIndex(x => new { x.SftpImportFileId, x.IncidentId }).IsUnique();
+            entity.Property(x => x.IncidentId).HasMaxLength(128);
+            entity.Property(x => x.Error).HasColumnType("TEXT");
         });
     }
 }

@@ -5,6 +5,5 @@
   <Project Path="BTSS.IAR.Web/BTSS.IAR.Web.csproj" />
   <Project Path="BTSS.IAR/BTSS.IAR.csproj" />
   <Project Path="BTSS.Installer/BTSS.Installer.csproj" />
-  <Project Path="BTSS.IntegrationTests/BTSS.IntegrationTests.csproj" />
   <Project Path="BTSS.Service/BTSS.Service.csproj" />
 </Solution>

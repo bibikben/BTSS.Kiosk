@@ -29,7 +29,7 @@
     private List<AgencyAdminDto> agencies = new();
     private EditableAgency? editing;
     protected override Task OnInitializedAsync() => ReloadAsync();
-    private async Task ReloadAsync() => agencies = await Http.GetFromJsonAsync<List<AgencyAdminDto>>("/admin/agencies") ?? new();
+    private async Task ReloadAsync() => agencies = await Http.GetFromJsonAsync<List<AgencyAdminDto>>("/api/admin/agencies") ?? new();
     private void NewAgency() => editing = new();
     private void EditAgency(AgencyAdminDto agency) => editing = new EditableAgency { Id = agency.Id, Code = agency.Code, Name = agency.Name, IsEnabled = agency.IsEnabled };
     private async Task SaveAsync() { if (editing is null) return; var req = new AgencyUpsertRequest(editing.Code ?? "", editing.Name ?? "", editing.IsEnabled); var resp = editing.Id == 0 ? await Http.PostAsJsonAsync("/admin/agencies", req) : await Http.PutAsJsonAsync($"/admin/agencies/{editing.Id}", req); if (resp.IsSuccessStatusCode) { editing = null; await ReloadAsync(); } }

@@ -1,6 +1,6 @@
 @page "/login"
 @attribute [AllowAnonymous]
-@inject HttpClient Http
+@inject BTSS.IAR.Web.Services.BrowserAuthClient AuthClient
 @inject NavigationManager Navigation
 
 <PageTitle>Login</PageTitle>
@@ -11,14 +11,17 @@
             <RadzenStack Gap="1rem">
                 <RadzenText TextStyle="TextStyle.DisplayH5">BTSS Login</RadzenText>
                 <RadzenText TextStyle="TextStyle.Body1">Shared identity for BTSS.Web and kiosk admin access.</RadzenText>
+
                 <RadzenTextBox @bind-Value="model.UserName" Name="username" Placeholder="Username" Style="width:100%" />
                 <RadzenPassword @bind-Value="model.Password" Name="password" Placeholder="Password" Style="width:100%" />
                 <RadzenCheckBox @bind-Value="rememberMe" /> <RadzenText>Remember me</RadzenText>
                 <RadzenDropDown TValue="int?" Data="agencies" TextProperty="AgencyName" ValueProperty="AgencyId" @bind-Value="model.AgencyId" Placeholder="Agency context (optional)" Style="width:100%" />
+
                 @if (!string.IsNullOrWhiteSpace(error))
                 {
                     <RadzenAlert AlertStyle="AlertStyle.Danger">@error</RadzenAlert>
                 }
+
                 <RadzenButton Text="Sign in" Click="SignInAsync" ButtonStyle="ButtonStyle.Primary" />
                 <RadzenText TextStyle="TextStyle.Caption">Default bootstrap admin: superadmin / ChangeMe123!</RadzenText>
             </RadzenStack>
@@ -32,35 +35,38 @@
     private bool rememberMe = true;
     private AgencyMembershipDto[] agencies = Array.Empty<AgencyMembershipDto>();
 
-    protected override async Task OnInitializedAsync()
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        try
+        if (!firstRender)
+            return;
+
+        var me = await AuthClient.GetCurrentUserAsync();
+        if (me is not null)
         {
-            var me = await Http.GetFromJsonAsync<CurrentUserDto>("/auth/me");
-            if (me is not null)
-            {
-                Navigation.NavigateTo("/");
-                return;
-            }
+            Navigation.NavigateTo("/", true);
         }
-        catch {}
     }
 
     private async Task SignInAsync()
     {
         error = null;
-        var response = await Http.PostAsJsonAsync("/auth/login", model);
-        if (response.IsSuccessStatusCode)
+
+        var result = await AuthClient.LoginAsync(model);
+        if (result.Success)
         {
-            var current = await response.Content.ReadFromJsonAsync<CurrentUserDto>();
+            var current = result.User;
             agencies = current?.Agencies ?? Array.Empty<AgencyMembershipDto>();
-            if ((current?.Agencies?.Length ?? 0) > 1 && current?.ActiveAgencyId is null) Navigation.NavigateTo("/agency-chooser", true);
-            else Navigation.NavigateTo("/", true);
+
+            if ((current?.Agencies?.Length ?? 0) > 1 && current?.ActiveAgencyId is null)
+                Navigation.NavigateTo("/agency-chooser", true);
+            else
+                Navigation.NavigateTo("/", true);
+
             return;
         }
 
-        error = response.StatusCode == System.Net.HttpStatusCode.Unauthorized
+        error = result.StatusCode == 401
             ? "Invalid username or password."
-            : $"Login failed: {(int)response.StatusCode}";
+            : $"Login failed: {result.StatusCode}";
     }
 }

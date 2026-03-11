@@ -33,6 +33,8 @@ public sealed class TokenRequest
 public sealed class SeedClientRequest
 {
     public int AgencyId { get; set; }
+    public int[]? DepartmentIds { get; set; }
+    public string[]? DepartmentCodes { get; set; }
     public string ClientId { get; set; } = "";
     public string ClientSecret { get; set; } = "";
     public string? Name { get; set; }
@@ -44,6 +46,8 @@ public sealed class SeedClientRequest
 public sealed class ApiClientUpsertRequest
 {
     public int AgencyId { get; set; }
+    public int[]? DepartmentIds { get; set; }
+    public string[]? DepartmentCodes { get; set; }
     public string ClientId { get; set; } = "";
     public string? ClientSecret { get; set; }
     public string? Name { get; set; }
@@ -53,6 +57,11 @@ public sealed class ApiClientUpsertRequest
     public bool RotateSecret { get; set; }
 }
 
+public sealed class ApiClientDepartmentUpdateRequest
+{
+    public int[]? DepartmentIds { get; set; }
+    public string[]? DepartmentCodes { get; set; }
+}
 
 public sealed class LegacyKioskMigrationRequest
 {

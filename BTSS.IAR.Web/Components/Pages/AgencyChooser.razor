@@ -1,4 +1,5 @@
 @page "/agency-chooser"
+@inject BTSS.IAR.Web.Services.BrowserAuthClient AuthClient
 @inject HttpClient Http
 @inject NavigationManager Navigation
 
@@ -39,7 +40,7 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        currentUser = await Http.GetFromJsonAsync<CurrentUserDto>("/auth/me");
+        currentUser = await AuthClient.GetCurrentUserAsync();
         if (currentUser is null)
         {
             Navigation.NavigateTo("/login", true);

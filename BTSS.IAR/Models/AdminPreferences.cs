@@ -17,7 +17,7 @@ public sealed class AdminPreferences
 
 public sealed class ServiceRuntimeDocument
 {
-    public string ApiBaseUrl { get; set; } = "https://localhost:5001/";
+    public string ApiBaseUrl { get; set; } = "https://localhost:56800/";
     public string IncidentFeedPath { get; set; } = "/api/service/incidents";
     public string OAuthTokenPath { get; set; } = "/connect/token";
     public string ClientId { get; set; } = "service-client";

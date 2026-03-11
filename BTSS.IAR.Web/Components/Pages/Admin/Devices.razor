@@ -47,7 +47,7 @@
     private DeviceAdminDto? selected;
 
     protected override async Task OnInitializedAsync()
-        => devices = await Http.GetFromJsonAsync<List<DeviceAdminDto>>("/admin/devices") ?? new();
+        => devices = await Http.GetFromJsonAsync<List<DeviceAdminDto>>("/api/admin/devices") ?? new();
 
     private void OnRowSelect(DeviceAdminDto item) => selected = item;
 

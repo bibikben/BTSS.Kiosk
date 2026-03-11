@@ -1,149 +1,203 @@
-using BTSS.IAR.Api.Auth;
+using System.Net;
+using System.Net.Http.Headers;
 using BTSS.IAR.Api.Data;
-using BTSS.IAR.Web.Components;
-using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Components;
-using Microsoft.AspNetCore.Components.Authorization;
-using Microsoft.AspNetCore.Components.Server;
+using Microsoft.AspNetCore.Components.Web;
 using Microsoft.EntityFrameworkCore;
-using Radzen;
+using Microsoft.Extensions.Primitives;
+using Microsoft.Net.Http.Headers;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddDbContext<AppDbContext>(opt =>
+builder.Services.AddRazorPages();
+builder.Services.AddServerSideBlazor();
+
+builder.Services.AddDbContext<AppDbContext>(options =>
 {
-    var cs = builder.Configuration.GetConnectionString("Sql")
-             ?? "Server=.\\SQLEXPRESS;Database=BTSS_IAR;Trusted_Connection=True;TrustServerCertificate=True";
-    opt.UseSqlServer(cs);
+    var connectionString = builder.Configuration.GetConnectionString("Sql")
+        ?? throw new InvalidOperationException("Missing connection string: ConnectionStrings:Sql");
+
+    options.UseSqlServer(connectionString);
 });
 
-builder.Services.AddScoped<HumanAuthService>();
-builder.Services.AddCascadingAuthenticationState();
-builder.Services.AddScoped<AuthenticationStateProvider, ServerAuthenticationStateProvider>();
-
-builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
-    .AddCookie(options =>
-    {
-        options.Cookie.Name = "btss.web.auth";
-        options.LoginPath = "/login";
-        options.AccessDeniedPath = "/login";
-        options.SlidingExpiration = true;
-    });
-
-builder.Services.AddAuthorization();
-
-builder.Services.AddRazorComponents()
-      .AddInteractiveServerComponents().AddHubOptions(options => options.MaximumReceiveMessageSize = 10 * 1024 * 1024);
-
-builder.Services.AddControllers();
-builder.Services.AddRadzenComponents();
-
-builder.Services.AddRadzenCookieThemeService(options =>
-{
-    options.Name = "BTSS.IAR.WebTheme";
-    options.Duration = TimeSpan.FromDays(365);
-});
-builder.Services.AddHttpContextAccessor();
+// Browser-facing HttpClient for components/pages.
+// Calls stay on the web host and are proxied from here to the API.
 builder.Services.AddScoped(sp =>
 {
     var nav = sp.GetRequiredService<NavigationManager>();
     return new HttpClient { BaseAddress = new Uri(nav.BaseUri) };
 });
+
+// Outbound proxy client to the API host.
+var apiBaseUrl = builder.Configuration["Api:BaseUrl"]
+    ?? throw new InvalidOperationException("Missing configuration: Api:BaseUrl");
+
+builder.Services.AddHttpClient("ApiProxy", client =>
+{
+    client.BaseAddress = new Uri(apiBaseUrl, UriKind.Absolute);
+})
+.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+{
+    AllowAutoRedirect = false,
+    UseCookies = false
+});
+
 var app = builder.Build();
-
-using (var scope = app.Services.CreateScope())
-{
-    var auth = scope.ServiceProvider.GetRequiredService<HumanAuthService>();
-    await auth.SeedDefaultsAsync();
-}
-
-var forwardingOptions = new ForwardedHeadersOptions()
-{
-    ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto
-};
-forwardingOptions.KnownIPNetworks.Clear();
-forwardingOptions.KnownProxies.Clear();
-
-app.UseForwardedHeaders(forwardingOptions);
 
 if (!app.Environment.IsDevelopment())
 {
-    app.UseExceptionHandler("/Error", createScopeForErrors: true);
+    app.UseExceptionHandler("/Error");
     app.UseHsts();
 }
 
-app.UseStatusCodePagesWithReExecute("/not-found");
 app.UseHttpsRedirection();
+app.UseStaticFiles();
+app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
-app.MapControllers();
-app.MapStaticAssets();
-app.UseAntiforgery();
 
-app.MapPost("/auth/login", async (HttpContext http, HumanAuthService auth, HumanLoginRequest request, CancellationToken ct) =>
-{
-    var user = await auth.ValidateCredentialsAsync(request.UserName, request.Password, ct);
-    if (user is null)
-        return Results.Unauthorized();
+app.MapBlazorHub();
+app.MapFallbackToPage("/_Host");
 
-    var current = await auth.BuildCurrentUserAsync(user, request.AgencyId, ct);
-    user.ActiveAgencyId = current.ActiveAgencyId;
-    user.UpdatedAtUtc = DateTime.UtcNow;
-    await http.RequestServices.GetRequiredService<AppDbContext>().SaveChangesAsync(ct);
-    await auth.SignInAsync(http, current);
-    return Results.Ok(current);
-}).AllowAnonymous();
+// Primary proxy surface: /api/* -> API /api/*
+app.Map("/api/{**path}", ProxyToApiAsync);
 
-app.MapPost("/auth/logout", async (HttpContext http) =>
-{
-    await http.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-    return Results.Ok(new { success = true });
-});
-
-app.MapGet("/auth/me", async (HttpContext http, AppDbContext db, HumanAuthService auth, CancellationToken ct) =>
-{
-    if (!(http.User.Identity?.IsAuthenticated ?? false))
-        return Results.Unauthorized();
-
-    var userIdValue = http.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-    if (!int.TryParse(userIdValue, out var userId))
-        return Results.Unauthorized();
-
-    var user = await db.Users.FirstOrDefaultAsync(x => x.Id == userId && x.IsEnabled, ct);
-    if (user is null)
-        return Results.Unauthorized();
-
-    return Results.Ok(await auth.BuildCurrentUserAsync(user, user.ActiveAgencyId, ct));
-});
-
-app.MapPost("/auth/switch-agency", async (HttpContext http, AppDbContext db, HumanAuthService auth, SwitchAgencyRequest request, CancellationToken ct) =>
-{
-    if (!(http.User.Identity?.IsAuthenticated ?? false))
-        return Results.Unauthorized();
-
-    var userIdValue = http.User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-    if (!int.TryParse(userIdValue, out var userId))
-        return Results.Unauthorized();
-
-    var user = await db.Users.FirstOrDefaultAsync(x => x.Id == userId && x.IsEnabled, ct);
-    if (user is null)
-        return Results.Unauthorized();
-
-    var hasMembership = await db.UserAgencies.AnyAsync(x => x.UserId == user.Id && x.AgencyId == request.AgencyId && x.IsEnabled, ct);
-    if (!user.IsSuperUser && !hasMembership)
-        return Results.Forbid();
-
-    user.ActiveAgencyId = request.AgencyId;
-    user.UpdatedAtUtc = DateTime.UtcNow;
-    await db.SaveChangesAsync(ct);
-
-    var current = await auth.BuildCurrentUserAsync(user, request.AgencyId, ct);
-    await auth.SignInAsync(http, current);
-    return Results.Ok(current);
-});
-
-app.MapRazorComponents<App>()
-   .AddInteractiveServerRenderMode();
+// Compatibility surface: /admin/* -> API /api/admin/*
+// This preserves current UI calls like "/admin/dashboard".
+app.Map("/admin/{**path}", ProxyAdminCompatAsync);
 
 app.Run();
+
+async Task ProxyToApiAsync(HttpContext context)
+{
+    var relativePath = context.Request.Path.Value ?? "/api";
+    await ProxyRequestAsync(context, relativePath);
+}
+
+async Task ProxyAdminCompatAsync(HttpContext context)
+{
+    var suffix = context.Request.Path.Value ?? "/admin";
+    var forwardedPath = "/api" + suffix;
+    await ProxyRequestAsync(context, forwardedPath);
+}
+
+async Task ProxyRequestAsync(HttpContext context, string targetPath)
+{
+    var clientFactory = context.RequestServices.GetRequiredService<IHttpClientFactory>();
+    var client = clientFactory.CreateClient("ApiProxy");
+
+    var targetUri = BuildTargetUri(client.BaseAddress!, targetPath, context.Request.QueryString);
+
+    using var requestMessage = CreateProxyHttpRequest(context, targetUri);
+
+    using var responseMessage = await client.SendAsync(
+        requestMessage,
+        HttpCompletionOption.ResponseHeadersRead,
+        context.RequestAborted);
+
+    await CopyProxyHttpResponse(context, responseMessage);
+}
+
+static Uri BuildTargetUri(Uri baseAddress, string path, QueryString queryString)
+{
+    var builder = new UriBuilder(new Uri(baseAddress, path))
+    {
+        Query = queryString.HasValue ? queryString.Value!.TrimStart('?') : string.Empty
+    };
+
+    return builder.Uri;
+}
+
+static HttpRequestMessage CreateProxyHttpRequest(HttpContext context, Uri targetUri)
+{
+    var requestMessage = new HttpRequestMessage
+    {
+        Method = new HttpMethod(context.Request.Method),
+        RequestUri = targetUri
+    };
+
+    if (HttpMethods.IsPost(context.Request.Method) ||
+        HttpMethods.IsPut(context.Request.Method) ||
+        HttpMethods.IsPatch(context.Request.Method) ||
+        HttpMethods.IsDelete(context.Request.Method))
+    {
+        requestMessage.Content = new StreamContent(context.Request.Body);
+    }
+
+    foreach (var header in context.Request.Headers)
+    {
+        if (ShouldSkipRequestHeader(header.Key))
+            continue;
+
+        if (!requestMessage.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray()) &&
+            requestMessage.Content is not null)
+        {
+            requestMessage.Content.Headers.TryAddWithoutValidation(header.Key, header.Value.ToArray());
+        }
+    }
+
+    // Forward original host/proto info so API can build correct redirects/links if needed.
+    requestMessage.Headers.TryAddWithoutValidation("X-Forwarded-Host", context.Request.Host.Value);
+    requestMessage.Headers.TryAddWithoutValidation("X-Forwarded-Proto", context.Request.Scheme);
+    requestMessage.Headers.TryAddWithoutValidation("X-Forwarded-For", context.Connection.RemoteIpAddress?.ToString());
+
+    return requestMessage;
+}
+
+static async Task CopyProxyHttpResponse(HttpContext context, HttpResponseMessage responseMessage)
+{
+    context.Response.StatusCode = (int)responseMessage.StatusCode;
+
+    foreach (var header in responseMessage.Headers)
+    {
+        if (string.Equals(header.Key, HeaderNames.TransferEncoding, StringComparison.OrdinalIgnoreCase))
+            continue;
+
+        if (string.Equals(header.Key, HeaderNames.Location, StringComparison.OrdinalIgnoreCase))
+        {
+            context.Response.Headers[header.Key] = RewriteLocationHeader(header.Value);
+            continue;
+        }
+
+        context.Response.Headers[header.Key] = new StringValues(header.Value.ToArray());
+    }
+
+    foreach (var header in responseMessage.Content.Headers)
+    {
+        if (string.Equals(header.Key, HeaderNames.TransferEncoding, StringComparison.OrdinalIgnoreCase))
+            continue;
+
+        context.Response.Headers[header.Key] = new StringValues(header.Value.ToArray());
+    }
+
+    // Let Kestrel manage transfer encoding.
+    context.Response.Headers.Remove(HeaderNames.TransferEncoding);
+
+    if (responseMessage.Content is not null)
+    {
+        await responseMessage.Content.CopyToAsync(context.Response.Body);
+    }
+}
+
+static string[] RewriteLocationHeader(IEnumerable<string> values)
+{
+    return values
+        .Select(v =>
+        {
+            if (string.IsNullOrWhiteSpace(v))
+                return v;
+
+            // If API redirects to /api/... keep it local to the web host.
+            if (Uri.TryCreate(v, UriKind.Absolute, out var absolute))
+                return absolute.PathAndQuery + absolute.Fragment;
+
+            return v;
+        })
+        .ToArray();
+}
+
+static bool ShouldSkipRequestHeader(string headerName)
+{
+    return headerName.Equals(HeaderNames.Host, StringComparison.OrdinalIgnoreCase)
+        || headerName.Equals(HeaderNames.ContentLength, StringComparison.OrdinalIgnoreCase);
+}

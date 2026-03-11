@@ -30,7 +30,7 @@
     private EditableRole? editing;
     private IEnumerable<string> selectedPermissions = Array.Empty<string>();
     protected override async Task OnInitializedAsync() { await ReloadAsync(); permissions = await Http.GetFromJsonAsync<List<PermissionDefinition>>("/api/lookups/permissions") ?? new(); }
-    private async Task ReloadAsync() => roles = await Http.GetFromJsonAsync<List<RoleAdminDto>>("/admin/roles") ?? new();
+    private async Task ReloadAsync() => roles = await Http.GetFromJsonAsync<List<RoleAdminDto>>("/api/admin/roles") ?? new();
     private void NewRole() { editing = new(); selectedPermissions = Array.Empty<string>(); }
     private void EditRole(RoleAdminDto role) { editing = new EditableRole { Id = role.Id, Name = role.Name, Description = role.Description, IsSystemRole = role.IsSystemRole }; selectedPermissions = role.PermissionCodes; }
     private async Task SaveAsync() { if (editing is null) return; var req = new RoleUpsertRequest(editing.Name ?? "", editing.Description ?? "", editing.IsSystemRole, selectedPermissions.ToArray()); var resp = editing.Id == 0 ? await Http.PostAsJsonAsync("/admin/roles", req) : await Http.PutAsJsonAsync($"/admin/roles/{editing.Id}", req); if (resp.IsSuccessStatusCode) { editing = null; await ReloadAsync(); } }

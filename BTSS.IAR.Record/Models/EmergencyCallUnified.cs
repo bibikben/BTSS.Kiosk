@@ -106,6 +106,38 @@ namespace BTSS.IAR.Record.Models
         }
     }
 
+    /// <summary>
+    /// Allows System.Text.Json to read string-like values from either JSON strings or primitive JSON tokens.
+    /// This is useful for fields that are inconsistently emitted as either quoted strings or numbers.
+    /// </summary>
+    public sealed class FlexibleStringConverter : System.Text.Json.Serialization.JsonConverter<string?>
+    {
+        public override string? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            return reader.TokenType switch
+            {
+                JsonTokenType.String => reader.GetString(),
+                JsonTokenType.Number => reader.TryGetInt64(out var i)
+                    ? i.ToString(CultureInfo.InvariantCulture)
+                    : reader.GetDouble().ToString(CultureInfo.InvariantCulture),
+                JsonTokenType.True => bool.TrueString,
+                JsonTokenType.False => bool.FalseString,
+                JsonTokenType.Null => null,
+                _ => JsonDocument.ParseValue(ref reader).RootElement.ToString()
+            };
+        }
+
+        public override void Write(Utf8JsonWriter writer, string? value, JsonSerializerOptions options)
+        {
+            if (value is null)
+            {
+                writer.WriteNullValue();
+                return;
+            }
+
+            writer.WriteStringValue(value);
+        }
+    }
     #endregion
 
     #region Leaf Types (Unified)
@@ -186,10 +218,12 @@ namespace BTSS.IAR.Record.Models
         [property: JsonPropertyName("locationVerified")] bool? LocationVerified,
 
         [property: JsonProperty("latitude")]
-        [property: JsonPropertyName("latitude")] string? LatitudeRaw,
+        [property: JsonPropertyName("latitude")]
+        [property: System.Text.Json.Serialization.JsonConverter(typeof(FlexibleStringConverter))] string? LatitudeRaw,
 
         [property: JsonProperty("longitude")]
-        [property: JsonPropertyName("longitude")] string? LongitudeRaw,
+        [property: JsonPropertyName("longitude")]
+        [property: System.Text.Json.Serialization.JsonConverter(typeof(FlexibleStringConverter))] string? LongitudeRaw,
 
         [property: JsonProperty("address")]
         [property: JsonPropertyName("address")] JsonElement? Address,
@@ -460,10 +494,12 @@ namespace BTSS.IAR.Record.Models
         [property: JsonPropertyName("zipCode")] string? ZipCode,
 
         [property: JsonProperty("latitude")]
-        [property: JsonPropertyName("latitude")] string? LatitudeRaw,
+        [property: JsonPropertyName("latitude")]
+        [property: System.Text.Json.Serialization.JsonConverter(typeof(FlexibleStringConverter))] string? LatitudeRaw,
 
         [property: JsonProperty("longitude")]
-        [property: JsonPropertyName("longitude")] string? LongitudeRaw,
+        [property: JsonPropertyName("longitude")]
+        [property: System.Text.Json.Serialization.JsonConverter(typeof(FlexibleStringConverter))] string? LongitudeRaw,
 
         [property: JsonProperty("num1")]
         [property: JsonPropertyName("num1")] string? Num1,

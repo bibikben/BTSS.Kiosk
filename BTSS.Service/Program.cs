@@ -2,6 +2,7 @@ using BTSS.Service.Data;
 using BTSS.Service.Options;
 using BTSS.Service.Services;
 using BTSS.Service.Workers;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -72,19 +73,34 @@ builder.Services.AddHttpClient<DeviceSyncClient>((sp, client) =>
     client.Timeout = TimeSpan.FromSeconds(Math.Max(15, runtime.HttpTimeoutSeconds));
 });
 
+builder.Services.AddHttpClient<SftpIncidentIngestClient>((sp, client) =>
+{
+    var runtime = sp.GetRequiredService<IOptions<ServiceRuntimeOptions>>().Value;
+
+    if (!string.IsNullOrWhiteSpace(runtime.ApiBaseUrl))
+    {
+        client.BaseAddress = new Uri(runtime.ApiBaseUrl, UriKind.Absolute);
+    }
+
+    client.Timeout = TimeSpan.FromSeconds(Math.Max(15, runtime.HttpTimeoutSeconds));
+});
 builder.Services.AddScoped<IncidentStore>();
 builder.Services.AddSingleton<PrintTemplateRenderer>();
 builder.Services.AddScoped<PrintJobWriter>();
 builder.Services.AddScoped<LocalSyncStore>();
 builder.Services.AddScoped<IPrintDispatcher, PrintDispatcher>();
+builder.Services.AddSingleton<SftpConnectionFactory>();
+builder.Services.AddScoped<SftpIncidentFileScanner>();
+builder.Services.AddScoped<SftpImportLedger>();
 builder.Services.AddHostedService<CallPollingWorker>();
+builder.Services.AddHostedService<SftpIncidentImportWorker>();
 
 var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<ServiceDbContext>();
-    await db.Database.EnsureCreatedAsync();
+    await ServiceDbSchemaInitializer.InitializeAsync(db);
 }
 
 await app.RunAsync();

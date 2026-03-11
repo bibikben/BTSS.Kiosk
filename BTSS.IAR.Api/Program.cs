@@ -19,13 +19,14 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using System.Threading.RateLimiting;
 using System.Linq.Expressions;
+using BTSS.IAR.Api;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddDbContext<AppDbContext>(opt =>
 {
     var cs = builder.Configuration.GetConnectionString("Sql")
-             ?? "Server=.\\SQLEXPRESS;Database=BTSS_IAR;Trusted_Connection=True;TrustServerCertificate=True";
+             ?? "Server=workhorse\\bibikdata;Database=AlarmData;Trusted_Connection=True;TrustServerCertificate=True";
     opt.UseSqlServer(cs);
 });
 
@@ -166,6 +167,8 @@ using (var scope = app.Services.CreateScope())
     await EnsureEpic2SchemaAsync(db);
     await EnsureEpic8SchemaAsync(db);
     await EnsureIngestSchemaAsync(db);
+    await EnsureDepartmentCatalogSchemaAsync(db);
+   // await SeedOnondagaDepartmentCatalogAsync(db);
     await scope.ServiceProvider.GetRequiredService<HumanAuthService>().SeedDefaultsAsync();
 }
 
@@ -212,6 +215,12 @@ app.MapPost("/connect/token", async (HttpRequest request, AppDbContext db, Token
         return Results.BadRequest(new { error = "unsupported_grant_type" });
 
     var client = await db.ApiClients.Include(x => x.SourceSystem).FirstOrDefaultAsync(c => c.ClientId == req.ClientId);
+    var subscribedDepartmentCodes = client is null
+        ? new List<string>()
+        : await db.ApiClientDepartments.Where(x => x.ApiClientId == client.Id)
+            .Join(db.Departments, x => x.DepartmentId, d => d.Id, (x, d) => d.DepartmentCode)
+            .OrderBy(x => x)
+            .ToListAsync();
     if (client == null || !client.IsEnabled || !client.VerifyClientSecret(req.ClientSecret))
         return Results.Unauthorized();
 
@@ -236,6 +245,7 @@ app.MapPost("/connect/token", async (HttpRequest request, AppDbContext db, Token
         new("source_system", client.EffectiveSourceSystemCode),
         new("scope", string.Join(' ', requestedScopes))
     };
+    claims.AddRange(subscribedDepartmentCodes.Select(x => new Claim("department_code", x)));
 
     claims.AddRange(requestedScopes.Select(s => new Claim("scope", s)));
 
@@ -279,6 +289,7 @@ if (app.Environment.IsDevelopment())
 
         db.ApiClients.Add(client);
         await db.SaveChangesAsync();
+        await SyncApiClientDepartmentsAsync(db, client.Id, req.DepartmentIds, req.DepartmentCodes);
         return Results.Ok(new { id = client.Id, message = "Seeded" });
     })
     .WithSummary("Development-only client seeding");
@@ -1134,6 +1145,25 @@ api.MapGet("/source-systems", async (AppDbContext db) =>
     return Results.Ok(list);
 }).RequireAuthorization("scope:clients.read");
 
+
+api.MapGet("/departments", async (AppDbContext db) =>
+{
+    var items = await db.Departments.AsNoTracking().OrderBy(x => x.DepartmentCode)
+        .Select(x => new { x.Id, x.DepartmentCode, x.DepartmentName, x.MainAddress, x.IsActive })
+        .ToListAsync();
+    return Results.Ok(items);
+}).RequireAuthorization("scope:clients.read");
+
+api.MapGet("/departments/{id:int}/stations", async (AppDbContext db, int id) =>
+{
+    if (!await db.Departments.AnyAsync(x => x.Id == id))
+        return Results.NotFound();
+
+    var items = await db.Stations.AsNoTracking().Where(x => x.DepartmentId == id).OrderBy(x => x.StationNumber)
+        .Select(x => new { x.Id, x.DepartmentId, x.StationNumber, x.StationCode, x.Address, x.IsActive })
+        .ToListAsync();
+    return Results.Ok(items);
+}).RequireAuthorization("scope:clients.read");
 api.MapGet("/clients", async (AppDbContext db) =>
 {
     var list = await db.ApiClients.Include(x => x.SourceSystem).AsNoTracking().OrderBy(x => x.Id).ToListAsync();
@@ -1145,6 +1175,28 @@ api.MapGet("/clients/{id:int}", async (AppDbContext db, int id) =>
     var client = await db.ApiClients.Include(x => x.SourceSystem).FirstOrDefaultAsync(x => x.Id == id);
     return client is null ? Results.NotFound() : Results.Ok(ToApiClientDetail(client));
 }).RequireAuthorization("scope:clients.read");
+
+
+api.MapGet("/clients/{id:int}/departments", async (AppDbContext db, int id) =>
+{
+    if (!await db.ApiClients.AnyAsync(x => x.Id == id))
+        return Results.NotFound();
+
+    var rows = await db.ApiClientDepartments.AsNoTracking()
+        .Where(x => x.ApiClientId == id)
+        .Join(db.Departments, x => x.DepartmentId, d => d.Id, (x, d) => new { d.Id, d.DepartmentCode, d.DepartmentName, x.IsPrimary })
+        .OrderByDescending(x => x.IsPrimary).ThenBy(x => x.DepartmentCode)
+        .ToListAsync();
+    return Results.Ok(rows);
+}).RequireAuthorization("scope:clients.read");
+
+api.MapPut("/clients/{id:int}/departments", async (AppDbContext db, int id, ApiClientDepartmentUpdateRequest req) =>
+{
+    if (!await db.ApiClients.AnyAsync(x => x.Id == id))
+        return Results.NotFound();
+    await SyncApiClientDepartmentsAsync(db, id, req.DepartmentIds, req.DepartmentCodes);
+    return Results.Ok(new { message = "Updated", clientId = id });
+}).RequireAuthorization("scope:clients.write");
 
 api.MapGet("/cutover/summary", async (AppDbContext db) =>
 {
@@ -1236,6 +1288,7 @@ api.MapPost("/clients", async (AppDbContext db, LookupUpsertService lookups, Api
 
     db.ApiClients.Add(client);
     await db.SaveChangesAsync();
+    await SyncApiClientDepartmentsAsync(db, client.Id, req.DepartmentIds, req.DepartmentCodes);
     return Results.Created($"/api/clients/{client.Id}", new { id = client.Id });
 }).RequireAuthorization("scope:clients.write");
 
@@ -1254,6 +1307,7 @@ api.MapPut("/clients/{id:int}", async (AppDbContext db, LookupUpsertService look
     client.UpdatedAtUtc = DateTime.UtcNow;
 
     await db.SaveChangesAsync();
+    await SyncApiClientDepartmentsAsync(db, client.Id, req.DepartmentIds, req.DepartmentCodes);
     return Results.Ok(new { message = "Updated" });
 }).RequireAuthorization("scope:clients.write");
 
@@ -2513,8 +2567,7 @@ static async Task EnsureEpic8SchemaAsync(AppDbContext db)
     if (!db.Database.IsSqlServer())
         return;
 
-    var sql = @"
-IF OBJECT_ID(N'[dbo].[DeviceHeartbeats]', N'U') IS NULL
+    var sql = @"IF OBJECT_ID(N'[dbo].[DeviceHeartbeats]', N'U') IS NULL
 BEGIN
     CREATE TABLE [dbo].[DeviceHeartbeats]
     (
@@ -2526,7 +2579,7 @@ BEGIN
         [ReceivedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_DeviceHeartbeats_ReceivedAtUtc] DEFAULT SYSUTCDATETIME(),
         [Status] NVARCHAR(64) NULL,
         [Message] NVARCHAR(MAX) NULL,
-        [PayloadJson] NVARCHAR(MAX) NOT NULL CONSTRAINT [DF_DeviceHeartbeats_PayloadJson] DEFAULT N'{}'
+        [PayloadJson] NVARCHAR(MAX) NOT NULL CONSTRAINT [DF_DeviceHeartbeats_PayloadJson] DEFAULT N'{{}}'
     );
     CREATE INDEX [IX_DeviceHeartbeats_DeviceId_ReceivedAtUtc] ON [dbo].[DeviceHeartbeats]([DeviceId],[ReceivedAtUtc]);
 END;
@@ -2547,7 +2600,7 @@ BEGIN
         [LastSyncLogId] BIGINT NULL,
         [LastBatchId] NVARCHAR(64) NULL,
         [ConflictPolicy] NVARCHAR(64) NULL,
-        [StateJson] NVARCHAR(MAX) NOT NULL CONSTRAINT [DF_DeviceSyncStates_StateJson] DEFAULT N'{}',
+        [StateJson] NVARCHAR(MAX) NOT NULL CONSTRAINT [DF_DeviceSyncStates_StateJson] DEFAULT N'{{}}',
         [UpdatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_DeviceSyncStates_UpdatedAtUtc] DEFAULT SYSUTCDATETIME()
     );
     CREATE UNIQUE INDEX [IX_DeviceSyncStates_DeviceId_AgencyId] ON [dbo].[DeviceSyncStates]([DeviceId],[AgencyId]);
@@ -2585,14 +2638,13 @@ BEGIN
         [Scope] NVARCHAR(64) NOT NULL CONSTRAINT [DF_SyncErrors_Scope] DEFAULT N'sync',
         [ErrorCode] NVARCHAR(64) NOT NULL CONSTRAINT [DF_SyncErrors_ErrorCode] DEFAULT N'outbox',
         [Message] NVARCHAR(MAX) NOT NULL,
-        [PayloadJson] NVARCHAR(MAX) NOT NULL CONSTRAINT [DF_SyncErrors_PayloadJson] DEFAULT N'{}',
+        [PayloadJson] NVARCHAR(MAX) NOT NULL CONSTRAINT [DF_SyncErrors_PayloadJson] DEFAULT N'{{}}',
         [IsResolved] BIT NOT NULL CONSTRAINT [DF_SyncErrors_IsResolved] DEFAULT 0,
         [CreatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_SyncErrors_CreatedAtUtc] DEFAULT SYSUTCDATETIME(),
         [ResolvedAtUtc] DATETIME2 NULL
     );
     CREATE INDEX [IX_SyncErrors_DeviceId_CreatedAtUtc] ON [dbo].[SyncErrors]([DeviceId],[CreatedAtUtc]);
-END;
-";
+END;";
 
     await db.Database.ExecuteSqlRawAsync(sql);
 }
@@ -2769,6 +2821,10 @@ static async Task UpsertCentralIncidentAsync(AppDbContext db, ApiClient client, 
     incidentEntity.Longitude = incident.GetLongitude();
     incidentEntity.Coordinates = BuildCoordinates(incident);
     incidentEntity.Status = incident.Details?.Status;
+    incidentEntity.Municipality = incident.Municipality;
+    incidentEntity.TypeCode = incident.Headers?.Type ?? incident.Agencies?.FirstOrDefault(a => !string.IsNullOrWhiteSpace(a.TypeCode))?.TypeCode;
+    incidentEntity.Subtype = incident.Agencies?.FirstOrDefault(a => !string.IsNullOrWhiteSpace(a.Subtype))?.Subtype;
+    incidentEntity.SubtypeCode = incident.Agencies?.FirstOrDefault(a => !string.IsNullOrWhiteSpace(a.SubtypeCode))?.SubtypeCode;
     incidentEntity.DispatchedAtUtc = ResolveUtc(incident.Details?.DispatchedAt?.ToString());
     incidentEntity.ClosedAtUtc = incident.GetIsClosed() ? (incident.GetUpdatedAtUtc() ?? changedAtUtc) : null;
     incidentEntity.RawPayloadJson = EmergencyCallUnifiedJson.Serialize(incident);
@@ -2779,6 +2835,7 @@ static async Task UpsertCentralIncidentAsync(AppDbContext db, ApiClient client, 
     await db.SaveChangesAsync();
 
     await UpsertIncidentAgenciesAsync(db, incidentEntity, incident, client, changedAtUtc);
+    await UpsertIncidentCaseNumbersAsync(db, incidentEntity, incident, changedAtUtc);
     await UpsertIncidentCallersAsync(db, incidentEntity, incident);
     await UpsertIncidentCommentsAsync(db, incidentEntity, incident);
     await UpsertIncidentUnitsAsync(db, incidentEntity, incident);
@@ -2882,48 +2939,58 @@ static async Task UpsertIncidentUnitsAsync(AppDbContext db, IncidentEntity incid
     db.UnitStatusEvents.RemoveRange(existingEvents);
 
     var grouped = (incident.Units ?? Enumerable.Empty<Unit>())
-        .GroupBy(x => new { AgencyId = defaultAgencyId, UnitIdentifier = (x.Id ?? string.Empty).Trim() });
+        .GroupBy(x => ((x.Id ?? string.Empty).Trim()), StringComparer.OrdinalIgnoreCase);
 
     foreach (var group in grouped)
     {
-        if (string.IsNullOrWhiteSpace(group.Key.UnitIdentifier))
+        var unitIdentifier = group.Key;
+        if (string.IsNullOrWhiteSpace(unitIdentifier))
             continue;
 
-        var latest = group.OrderByDescending(x => ResolveUtc(x.CreatedAt?.ToString()) ?? DateTime.MinValue).First();
+        var latest = group.OrderByDescending(x => x.CreatedAt ?? x.CreatedAtISO ?? UnitUpdatedAtFallback(x)).First();
+        var department = await ResolveDepartmentForUnitAsync(db, latest, incident);
+        var station = await ResolveStationForUnitAsync(db, department?.Id, latest);
+        var unitCatalog = await ResolveOrCreateUnitCatalogAsync(db, unitIdentifier, latest.Type, department?.Id, station?.Id);
+
         db.IncidentUnits.Add(new IncidentUnitEntity
         {
             IncidentId = incidentEntity.Id,
-            AgencyId = group.Key.AgencyId,
-            UnitIdentifier = group.Key.UnitIdentifier,
+            AgencyId = defaultAgencyId,
+            UnitCatalog = unitCatalog,
+            UnitCatalogId = unitCatalog is not null && unitCatalog.Id > 0 ? unitCatalog.Id : null,
+            UnitIdentifier = unitIdentifier,
             Station = latest.Station,
             UnitType = latest.Type,
+            AgencyRaw = latest.Agency,
+            StatusOriginal = latest.StatusOriginal,
             CurrentStatus = latest.Status,
-            CreatedAtUtc = group.Min(x => ResolveUtc(x.CreatedAt?.ToString())),
-            UpdatedAtUtc = group.Max(x => ResolveUtc(x.CreatedAt?.ToString()))
+            Comment = JsonText(latest.UnitNotes),
+            CreatedAtUtc = group.Min(x => x.CreatedAt ?? x.CreatedAtISO),
+            UpdatedAtUtc = group.Max(x => x.CreatedAt ?? x.CreatedAtISO ?? x.Arrived ?? x.Enroute ?? x.Dispatched ?? x.Cleared ?? x.Quarters),
         });
 
-        foreach (var item in group.OrderBy(x => ResolveUtc(x.CreatedAt?.ToString()) ?? DateTime.MinValue))
+        foreach (var item in group.OrderBy(x => x.CreatedAt ?? x.CreatedAtISO ?? x.Arrived ?? x.Enroute ?? x.Dispatched ?? DateTime.MinValue))
         {
             db.UnitStatusEvents.Add(new UnitStatusEventEntity
             {
                 IncidentId = incidentEntity.Id,
-                AgencyId = group.Key.AgencyId,
-                UnitIdentifier = group.Key.UnitIdentifier,
+                AgencyId = defaultAgencyId,
+                UnitIdentifier = unitIdentifier,
                 StatusCodeRaw = item.StatusOriginal ?? item.Status,
                 StatusCodeNormalized = IncidentStatusNormalizer.Normalize(item.StatusOriginal ?? item.Status),
-                OccurredAtUtc = ResolveUtc(item.CreatedAt?.ToString()),
+                OccurredAtUtc = item.CreatedAt ?? item.CreatedAtISO,
                 SourceText = JsonText(item.UnitNotes),
                 CreatedBy = item.CreatedBy,
                 CreatedAgency = item.CreatedAgency
             });
 
-            AddSyntheticTimelineEvent(db, incidentEntity.Id, group.Key.AgencyId, group.Key.UnitIdentifier, "DP", "Dispatched", item.Dispatched, item.CreatedBy, item.CreatedAgency);
-            AddSyntheticTimelineEvent(db, incidentEntity.Id, group.Key.AgencyId, group.Key.UnitIdentifier, "ER", "Enroute", item.Enroute, item.CreatedBy, item.CreatedAgency);
-            AddSyntheticTimelineEvent(db, incidentEntity.Id, group.Key.AgencyId, group.Key.UnitIdentifier, "OS", "Arrived", item.Arrived, item.CreatedBy, item.CreatedAgency);
-            AddSyntheticTimelineEvent(db, incidentEntity.Id, group.Key.AgencyId, group.Key.UnitIdentifier, "TR", "Transport Begin", item.TransportBegin, item.CreatedBy, item.CreatedAgency);
-            AddSyntheticTimelineEvent(db, incidentEntity.Id, group.Key.AgencyId, group.Key.UnitIdentifier, "TC", "Transport Complete",item.TransportComplete, item.CreatedBy, item.CreatedAgency);
-            AddSyntheticTimelineEvent(db, incidentEntity.Id, group.Key.AgencyId, group.Key.UnitIdentifier, "CL", "Cleared", item.Cleared, item.CreatedBy, item.CreatedAgency);
-            AddSyntheticTimelineEvent(db, incidentEntity.Id, group.Key.AgencyId, group.Key.UnitIdentifier, "AV", "In Quarters",item.Quarters, item.CreatedBy, item.CreatedAgency);
+            AddSyntheticTimelineEvent(db, incidentEntity.Id, defaultAgencyId, unitIdentifier, "DP", "Dispatched", item.Dispatched, item.CreatedBy, item.CreatedAgency);
+            AddSyntheticTimelineEvent(db, incidentEntity.Id, defaultAgencyId, unitIdentifier, "ER", "Enroute", item.Enroute, item.CreatedBy, item.CreatedAgency);
+            AddSyntheticTimelineEvent(db, incidentEntity.Id, defaultAgencyId, unitIdentifier, "OS", "Arrived", item.Arrived, item.CreatedBy, item.CreatedAgency);
+            AddSyntheticTimelineEvent(db, incidentEntity.Id, defaultAgencyId, unitIdentifier, "TR", "Transport Begin", item.TransportBegin, item.CreatedBy, item.CreatedAgency);
+            AddSyntheticTimelineEvent(db, incidentEntity.Id, defaultAgencyId, unitIdentifier, "TC", "Transport Complete", item.TransportComplete, item.CreatedBy, item.CreatedAgency);
+            AddSyntheticTimelineEvent(db, incidentEntity.Id, defaultAgencyId, unitIdentifier, "CL", "Cleared", item.Cleared, item.CreatedBy, item.CreatedAgency);
+            AddSyntheticTimelineEvent(db, incidentEntity.Id, defaultAgencyId, unitIdentifier, "AV", "In Quarters", item.Quarters, item.CreatedBy, item.CreatedAgency);
         }
     }
 }
@@ -3069,7 +3136,428 @@ static IEnumerable<(string AgencyCode, string? DispatchGroup, string? CaseNumber
     }
 }
 
+static async Task UpsertIncidentCaseNumbersAsync(AppDbContext db, IncidentEntity incidentEntity, EmergencyCallUnified incident, DateTime changedAtUtc)
+{
+    var existing = await db.IncidentCaseNumbers.Where(x => x.IncidentId == incidentEntity.Id).ToListAsync();
+    db.IncidentCaseNumbers.RemoveRange(existing);
 
+    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    void AddCase(string? caseNumber, string source, bool isPrimary)
+    {
+        var value = caseNumber?.Trim();
+        if (string.IsNullOrWhiteSpace(value) || !seen.Add(value))
+            return;
+        db.IncidentCaseNumbers.Add(new IncidentCaseNumberEntity
+        {
+            IncidentId = incidentEntity.Id,
+            CaseNumber = value,
+            AgencyPrefix = value.Length >= 3 ? value[..3].ToUpperInvariant() : value.ToUpperInvariant(),
+            Source = source,
+            IsPrimary = isPrimary,
+            CreatedAtUtc = changedAtUtc
+        });
+    }
+
+    AddCase(incident.CNum, "TopLevel", true);
+    foreach (var agency in incident.Agencies ?? Enumerable.Empty<BTSS.IAR.Record.Models.Agency>())
+        foreach (var caseNumber in agency.CaseNumbers ?? Enumerable.Empty<string>())
+            AddCase(caseNumber, "AgencyArray", string.Equals(caseNumber, incident.CNum, StringComparison.OrdinalIgnoreCase));
+    foreach (var mapping in ExtractAgencyCaseMappings(incident))
+        AddCase(mapping.CaseNumber, "ParsedComment", string.Equals(mapping.CaseNumber, incident.CNum, StringComparison.OrdinalIgnoreCase));
+}
+
+static async Task SyncApiClientDepartmentsAsync(AppDbContext db, int apiClientId, int[]? departmentIds, string[]? departmentCodes)
+{
+    if ((departmentIds is null || departmentIds.Length == 0) && (departmentCodes is null || departmentCodes.Length == 0))
+        return;
+
+    var resolvedIds = new HashSet<int>();
+    if (departmentIds is { Length: > 0 })
+    {
+        foreach (var id in departmentIds.Where(x => x > 0))
+            resolvedIds.Add(id);
+    }
+    if (departmentCodes is { Length: > 0 })
+    {
+        var codes = departmentCodes.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var ids = await db.Departments.Where(x => codes.Contains(x.DepartmentCode)).Select(x => x.Id).ToListAsync();
+        foreach (var id in ids)
+            resolvedIds.Add(id);
+    }
+    if (resolvedIds.Count == 0)
+        return;
+
+    var existing = await db.ApiClientDepartments.Where(x => x.ApiClientId == apiClientId).ToListAsync();
+    db.ApiClientDepartments.RemoveRange(existing.Where(x => !resolvedIds.Contains(x.DepartmentId)));
+    var ordered = resolvedIds.OrderBy(x => x).ToArray();
+    foreach (var id in ordered)
+    {
+        var row = existing.FirstOrDefault(x => x.DepartmentId == id);
+        if (row is null)
+        {
+            db.ApiClientDepartments.Add(new ApiClientDepartmentEntity
+            {
+                ApiClientId = apiClientId,
+                DepartmentId = id,
+                IsPrimary = id == ordered[0],
+                CreatedAtUtc = DateTime.UtcNow
+            });
+        }
+        else
+        {
+            row.IsPrimary = id == ordered[0];
+        }
+    }
+    await db.SaveChangesAsync();
+}
+
+static async Task<DepartmentEntity?> ResolveDepartmentForUnitAsync(AppDbContext db, Unit unit, EmergencyCallUnified incident)
+{
+    var unitId = unit.Id?.Trim();
+    if (!string.IsNullOrWhiteSpace(unitId) && unitId.Length >= 2 && char.IsDigit(unitId[0]) && char.IsDigit(unitId[1]))
+    {
+        var code = unitId[..2];
+        return await db.Departments.FirstOrDefaultAsync(x => x.DepartmentCode == code);
+    }
+    var station = unit.Station?.Trim();
+    if (!string.IsNullOrWhiteSpace(station))
+    {
+        var trailingNumber = new string(station.Reverse().TakeWhile(char.IsDigit).Reverse().ToArray());
+        if (!string.IsNullOrWhiteSpace(trailingNumber) && !string.IsNullOrWhiteSpace(unitId) && unitId.Length >= 2 && char.IsDigit(unitId[0]) && char.IsDigit(unitId[1]))
+        {
+            var code = unitId[..2];
+            return await db.Departments.FirstOrDefaultAsync(x => x.DepartmentCode == code);
+        }
+    }
+    return null;
+}
+
+static async Task<StationEntity?> ResolveStationForUnitAsync(AppDbContext db, int? departmentId, Unit unit)
+{
+    if (!departmentId.HasValue)
+        return null;
+    var stationText = unit.Station?.Trim();
+    if (string.IsNullOrWhiteSpace(stationText))
+        return null;
+
+    var station = await db.Stations.FirstOrDefaultAsync(x => x.DepartmentId == departmentId.Value && x.StationCode == stationText);
+    if (station is not null)
+        return station;
+
+    var digits = new string(stationText.Reverse().TakeWhile(char.IsDigit).Reverse().ToArray());
+    if (!string.IsNullOrWhiteSpace(digits))
+    {
+        station = await db.Stations.FirstOrDefaultAsync(x => x.DepartmentId == departmentId.Value && x.StationNumber == digits);
+        if (station is not null)
+        {
+            if (string.IsNullOrWhiteSpace(station.StationCode))
+                station.StationCode = stationText;
+            return station;
+        }
+    }
+    return null;
+}
+
+static async Task<UnitCatalogEntity?> ResolveOrCreateUnitCatalogAsync(AppDbContext db, string inboundCode, string? equipmentName, int? departmentId, int? stationId)
+{
+    inboundCode = (inboundCode ?? string.Empty).Trim();
+    if (string.IsNullOrWhiteSpace(inboundCode) || !departmentId.HasValue)
+        return null;
+
+    var now = DateTime.UtcNow;
+
+    var byTransmit = await db.UnitCatalog.FirstOrDefaultAsync(x =>
+        x.DepartmentId == departmentId.Value &&
+        x.TransmitCode != null &&
+        x.TransmitCode == inboundCode);
+
+    if (byTransmit is not null)
+    {
+        if (!string.IsNullOrWhiteSpace(equipmentName) && string.IsNullOrWhiteSpace(byTransmit.EquipmentName))
+            byTransmit.EquipmentName = equipmentName;
+        if (stationId.HasValue)
+            byTransmit.StationId = stationId.Value;
+        byTransmit.UpdatedAtUtc = now;
+        return byTransmit;
+    }
+
+    var byCode = await db.UnitCatalog.FirstOrDefaultAsync(x =>
+        x.DepartmentId == departmentId.Value &&
+        x.Code == inboundCode);
+
+    if (byCode is not null)
+    {
+        if (string.IsNullOrWhiteSpace(byCode.TransmitCode))
+        {
+            byCode.TransmitCode = inboundCode;
+            if (!string.IsNullOrWhiteSpace(equipmentName) && string.IsNullOrWhiteSpace(byCode.EquipmentName))
+                byCode.EquipmentName = equipmentName;
+            if (stationId.HasValue)
+                byCode.StationId = stationId.Value;
+            byCode.UpdatedAtUtc = now;
+            return byCode;
+        }
+
+        if (!string.Equals(byCode.TransmitCode, inboundCode, StringComparison.OrdinalIgnoreCase))
+        {
+            var createdAlias = new UnitCatalogEntity
+            {
+                DepartmentId = departmentId.Value,
+                StationId = stationId,
+                Code = inboundCode,
+                TransmitCode = inboundCode,
+                EquipmentName = !string.IsNullOrWhiteSpace(equipmentName) ? equipmentName : inboundCode,
+                IsActive = true,
+                CreatedAtUtc = now,
+                UpdatedAtUtc = now
+            };
+
+            db.UnitCatalog.Add(createdAlias);
+            return createdAlias;
+        }
+
+        if (!string.IsNullOrWhiteSpace(equipmentName) && string.IsNullOrWhiteSpace(byCode.EquipmentName))
+            byCode.EquipmentName = equipmentName;
+        if (stationId.HasValue)
+            byCode.StationId = stationId.Value;
+        byCode.UpdatedAtUtc = now;
+        return byCode;
+    }
+
+    if (!string.IsNullOrWhiteSpace(equipmentName))
+    {
+        var byName = await db.UnitCatalog.FirstOrDefaultAsync(x =>
+            x.DepartmentId == departmentId.Value &&
+            x.EquipmentName != null &&
+            x.EquipmentName == equipmentName);
+
+        if (byName is not null)
+        {
+            if (string.IsNullOrWhiteSpace(byName.TransmitCode))
+            {
+                byName.TransmitCode = inboundCode;
+                if (stationId.HasValue)
+                    byName.StationId = stationId.Value;
+                byName.UpdatedAtUtc = now;
+                return byName;
+            }
+
+            if (!string.Equals(byName.TransmitCode, inboundCode, StringComparison.OrdinalIgnoreCase))
+            {
+                var createdAlias = new UnitCatalogEntity
+                {
+                    DepartmentId = departmentId.Value,
+                    StationId = stationId,
+                    Code = inboundCode,
+                    TransmitCode = inboundCode,
+                    EquipmentName = inboundCode,
+                    IsActive = true,
+                    CreatedAtUtc = now,
+                    UpdatedAtUtc = now
+                };
+
+                db.UnitCatalog.Add(createdAlias);
+                return createdAlias;
+            }
+
+            if (stationId.HasValue)
+                byName.StationId = stationId.Value;
+            byName.UpdatedAtUtc = now;
+            return byName;
+        }
+    }
+
+    var created = new UnitCatalogEntity
+    {
+        DepartmentId = departmentId.Value,
+        StationId = stationId,
+        Code = inboundCode,
+        TransmitCode = inboundCode,
+        EquipmentName = !string.IsNullOrWhiteSpace(equipmentName) ? equipmentName : inboundCode,
+        IsActive = true,
+        CreatedAtUtc = now,
+        UpdatedAtUtc = now
+    };
+
+    db.UnitCatalog.Add(created);
+    return created;
+}
+
+static DateTime? UnitUpdatedAtFallback(Unit unit) =>
+    unit.CreatedAt
+    ?? unit.CreatedAtISO
+    ?? unit.Arrived
+    ?? unit.Enroute
+    ?? unit.Dispatched
+    ?? unit.TransportBegin
+    ?? unit.TransportComplete
+    ?? unit.Cleared
+    ?? unit.Quarters;
+
+static async Task EnsureDepartmentCatalogSchemaAsync(AppDbContext db)
+{
+    var sql = @"
+IF OBJECT_ID(N'[dbo].[Departments]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[Departments]
+    (
+        [Id] INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [DepartmentCode] NVARCHAR(4) NOT NULL,
+        [DepartmentName] NVARCHAR(256) NOT NULL,
+        [MainAddress] NVARCHAR(512) NULL,
+        [City] NVARCHAR(128) NULL,
+        [State] NVARCHAR(64) NULL,
+        [PostalCode] NVARCHAR(32) NULL,
+        [IsActive] BIT NOT NULL CONSTRAINT [DF_Departments_IsActive] DEFAULT 1,
+        [CreatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_Departments_CreatedAtUtc] DEFAULT SYSUTCDATETIME(),
+        [UpdatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_Departments_UpdatedAtUtc] DEFAULT SYSUTCDATETIME()
+    );
+    CREATE UNIQUE INDEX [IX_Departments_DepartmentCode] ON [dbo].[Departments]([DepartmentCode]);
+END
+IF OBJECT_ID(N'[dbo].[Stations]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[Stations]
+    (
+        [Id] INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [DepartmentId] INT NOT NULL,
+        [StationNumber] NVARCHAR(20) NOT NULL,
+        [StationCode] NVARCHAR(64) NULL,
+        [Address] NVARCHAR(512) NOT NULL,
+        [City] NVARCHAR(128) NULL,
+        [State] NVARCHAR(64) NULL,
+        [PostalCode] NVARCHAR(32) NULL,
+        [IsActive] BIT NOT NULL CONSTRAINT [DF_Stations_IsActive] DEFAULT 1,
+        [CreatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_Stations_CreatedAtUtc] DEFAULT SYSUTCDATETIME(),
+        [UpdatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_Stations_UpdatedAtUtc] DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT [FK_Stations_Departments] FOREIGN KEY ([DepartmentId]) REFERENCES [dbo].[Departments]([Id]) ON DELETE CASCADE
+    );
+    CREATE UNIQUE INDEX [IX_Stations_DepartmentId_StationNumber] ON [dbo].[Stations]([DepartmentId], [StationNumber]);
+END
+IF OBJECT_ID(N'[dbo].[Units]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[Units]
+    (
+        [Id] INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [Code] NVARCHAR(30) NOT NULL,
+        [TransmitCode] NVARCHAR(30) NULL,
+        [EquipmentName] NVARCHAR(128) NULL,
+        [DepartmentId] INT NOT NULL,
+        [StationId] INT NULL,
+        [IsActive] BIT NOT NULL CONSTRAINT [DF_Units_IsActive] DEFAULT 1,
+        [CreatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_Units_CreatedAtUtc] DEFAULT SYSUTCDATETIME(),
+        [UpdatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_Units_UpdatedAtUtc] DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT [FK_Units_Departments] FOREIGN KEY ([DepartmentId]) REFERENCES [dbo].[Departments]([Id]),
+        CONSTRAINT [FK_Units_Stations] FOREIGN KEY ([StationId]) REFERENCES [dbo].[Stations]([Id])
+    );
+    CREATE UNIQUE INDEX [IX_Units_DepartmentId_Code] ON [dbo].[Units]([DepartmentId], [Code]);
+    CREATE UNIQUE INDEX [IX_Units_DepartmentId_TransmitCode] ON [dbo].[Units]([DepartmentId], [TransmitCode]) WHERE [TransmitCode] IS NOT NULL;
+END
+IF COL_LENGTH('Units', 'TransmitCode') IS NULL ALTER TABLE [dbo].[Units] ADD [TransmitCode] NVARCHAR(30) NULL;
+IF EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Units_Code' AND object_id = OBJECT_ID('dbo.Units'))
+    DROP INDEX [IX_Units_Code] ON [dbo].[Units];
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Units_DepartmentId_Code' AND object_id = OBJECT_ID('dbo.Units'))
+    CREATE UNIQUE INDEX [IX_Units_DepartmentId_Code] ON [dbo].[Units]([DepartmentId], [Code]);
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Units_DepartmentId_TransmitCode' AND object_id = OBJECT_ID('dbo.Units'))
+    CREATE UNIQUE INDEX [IX_Units_DepartmentId_TransmitCode] ON [dbo].[Units]([DepartmentId], [TransmitCode]) WHERE [TransmitCode] IS NOT NULL;
+UPDATE [dbo].[Units] SET [TransmitCode] = [Code] WHERE [TransmitCode] IS NULL AND [Code] IS NOT NULL;
+IF OBJECT_ID(N'[dbo].[ApiClientDepartments]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[ApiClientDepartments]
+    (
+        [Id] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [ApiClientId] INT NOT NULL,
+        [DepartmentId] INT NOT NULL,
+        [IsPrimary] BIT NOT NULL CONSTRAINT [DF_ApiClientDepartments_IsPrimary] DEFAULT 0,
+        [CreatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_ApiClientDepartments_CreatedAtUtc] DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT [FK_ApiClientDepartments_ApiClients] FOREIGN KEY ([ApiClientId]) REFERENCES [dbo].[ApiClients]([Id]) ON DELETE CASCADE,
+        CONSTRAINT [FK_ApiClientDepartments_Departments] FOREIGN KEY ([DepartmentId]) REFERENCES [dbo].[Departments]([Id]) ON DELETE CASCADE
+    );
+    CREATE UNIQUE INDEX [IX_ApiClientDepartments_ApiClientId_DepartmentId] ON [dbo].[ApiClientDepartments]([ApiClientId], [DepartmentId]);
+END
+IF OBJECT_ID(N'[dbo].[IncidentCaseNumbers]', N'U') IS NULL
+BEGIN
+    CREATE TABLE [dbo].[IncidentCaseNumbers]
+    (
+        [Id] BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [IncidentId] BIGINT NOT NULL,
+        [CaseNumber] NVARCHAR(30) NOT NULL,
+        [AgencyPrefix] NVARCHAR(8) NOT NULL,
+        [Source] NVARCHAR(30) NULL,
+        [IsPrimary] BIT NOT NULL CONSTRAINT [DF_IncidentCaseNumbers_IsPrimary] DEFAULT 0,
+        [CreatedAtUtc] DATETIME2 NOT NULL CONSTRAINT [DF_IncidentCaseNumbers_CreatedAtUtc] DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT [FK_IncidentCaseNumbers_Incidents] FOREIGN KEY ([IncidentId]) REFERENCES [dbo].[Incidents]([Id]) ON DELETE CASCADE
+    );
+    CREATE UNIQUE INDEX [IX_IncidentCaseNumbers_IncidentId_CaseNumber] ON [dbo].[IncidentCaseNumbers]([IncidentId], [CaseNumber]);
+END
+IF COL_LENGTH('Incidents', 'Municipality') IS NULL ALTER TABLE [dbo].[Incidents] ADD [Municipality] NVARCHAR(64) NULL;
+IF COL_LENGTH('Incidents', 'TypeCode') IS NULL ALTER TABLE [dbo].[Incidents] ADD [TypeCode] NVARCHAR(64) NULL;
+IF COL_LENGTH('Incidents', 'Subtype') IS NULL ALTER TABLE [dbo].[Incidents] ADD [Subtype] NVARCHAR(256) NULL;
+IF COL_LENGTH('Incidents', 'SubtypeCode') IS NULL ALTER TABLE [dbo].[Incidents] ADD [SubtypeCode] NVARCHAR(64) NULL;
+IF COL_LENGTH('IncidentUnits', 'UnitCatalogId') IS NULL ALTER TABLE [dbo].[IncidentUnits] ADD [UnitCatalogId] INT NULL;
+IF COL_LENGTH('IncidentUnits', 'AgencyRaw') IS NULL ALTER TABLE [dbo].[IncidentUnits] ADD [AgencyRaw] NVARCHAR(64) NULL;
+IF COL_LENGTH('IncidentUnits', 'StatusOriginal') IS NULL ALTER TABLE [dbo].[IncidentUnits] ADD [StatusOriginal] NVARCHAR(8) NULL;
+IF COL_LENGTH('IncidentUnits', 'Comment') IS NULL ALTER TABLE [dbo].[IncidentUnits] ADD [Comment] NVARCHAR(MAX) NULL;
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name = 'FK_IncidentUnits_Units')
+BEGIN
+    ALTER TABLE [dbo].[IncidentUnits] WITH CHECK ADD CONSTRAINT [FK_IncidentUnits_Units] FOREIGN KEY ([UnitCatalogId]) REFERENCES [dbo].[Units]([Id]);
+END";
+    if (db.Database.IsSqlServer())
+        await db.Database.ExecuteSqlRawAsync(sql);
+}
+
+static async Task SeedOnondagaDepartmentCatalogAsync(AppDbContext db)
+{
+    
+    foreach (var seed in OnondagaDepartmentSeedData.All)
+    {
+        var department = await db.Departments.FirstOrDefaultAsync(x => x.DepartmentCode == seed.Code);
+        if (department is null)
+        {
+            department = new DepartmentEntity
+            {
+                DepartmentCode = seed.Code,
+                DepartmentName = seed.Name,
+                MainAddress = seed.MainAddress,
+                IsActive = true,
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow
+            };
+            db.Departments.Add(department);
+            await db.SaveChangesAsync();
+        }
+        else
+        {
+            department.DepartmentName = seed.Name;
+            department.MainAddress = seed.MainAddress;
+            department.UpdatedAtUtc = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
+
+        var existingStations = await db.Stations.Where(x => x.DepartmentId == department.Id).ToListAsync();
+        foreach (var stationSeed in seed.Stations)
+        {
+            var station = existingStations.FirstOrDefault(x => x.StationNumber == stationSeed.Number);
+            if (station is null)
+            {
+                db.Stations.Add(new StationEntity
+                {
+                    DepartmentId = department.Id,
+                    StationNumber = stationSeed.Number,
+                    Address = stationSeed.Address,
+                    IsActive = true,
+                    CreatedAtUtc = DateTime.UtcNow,
+                    UpdatedAtUtc = DateTime.UtcNow
+                });
+            }
+            else
+            {
+                station.Address = stationSeed.Address;
+                station.UpdatedAtUtc = DateTime.UtcNow;
+            }
+        }
+        await db.SaveChangesAsync();
+    }
+}
 static int? ResolveUserId(ClaimsPrincipal user)
 {
     var userIdValue = user.FindFirst(ClaimTypes.NameIdentifier)?.Value;
@@ -4045,155 +4533,4 @@ static Expression<Func<T, bool>> BuildDateLessThanOrEqualPredicate<T>(Expression
     var hasValue = Expression.Property(member, nameof(Nullable<DateTime>.HasValue));
     var lte = Expression.LessThanOrEqual(Expression.Property(member, nameof(Nullable<DateTime>.Value)), Expression.Constant(value));
     return Expression.Lambda<Func<T, bool>>(Expression.AndAlso(hasValue, lte), p);
-}
-
-
-public sealed class AuditMetadata
-{
-    public DateTime ChangedAtUtc { get; set; }
-    public string? ChangedBy { get; set; }
-    public string? Reason { get; set; }
-    public string? Source { get; set; }
-}
-
-public sealed class GlobalSettingsDocument
-{
-    public JsonObject Settings { get; set; } = new();
-    public AuditMetadata? Audit { get; set; }
-    public DateTime? UpdatedAtUtc { get; set; }
-}
-
-public sealed class DeviceProfile
-{
-    public string? DisplayName { get; set; }
-    public string? Description { get; set; }
-    public string? Location { get; set; }
-    public string? StationCode { get; set; }
-    public string? StationName { get; set; }
-    public string? StartupUrl { get; set; }
-    public string? DisplaySource { get; set; }
-    public int? RefreshSeconds { get; set; }
-    public string? PrinterRouting { get; set; }
-    public string? DefaultPrinterName { get; set; }
-    public string? CommandState { get; set; }
-    public bool Enabled { get; set; } = true;
-    public JsonObject Metadata { get; set; } = new();
-}
-
-public sealed class DeviceSettingsEntry
-{
-    public string DeviceId { get; set; } = "";
-    public DeviceProfile? Profile { get; set; }
-    public JsonObject Settings { get; set; } = new();
-    public AuditMetadata? Audit { get; set; }
-    public DateTime? UpdatedAtUtc { get; set; }
-}
-
-public sealed class DisplayRegistrationEntry
-{
-    public string DeviceId { get; set; } = "";
-    public string? Name { get; set; }
-    public string? Description { get; set; }
-    public string? Location { get; set; }
-    public bool Enabled { get; set; } = true;
-    public JsonObject Settings { get; set; } = new();
-    public DeviceProfile? Profile { get; set; }
-    public AuditMetadata? Audit { get; set; }
-    public DateTime? UpdatedAtUtc { get; set; }
-}
-
-public sealed class DeviceResolvedConfiguration
-{
-    public string ClientId { get; set; } = "";
-    public int ApiClientId { get; set; }
-    public int AgencyId { get; set; }
-    public string DeviceId { get; set; } = "";
-    public DeviceProfile? Profile { get; set; }
-    public JsonObject GlobalSettings { get; set; } = new();
-    public JsonObject DeviceSettings { get; set; } = new();
-    public AuditMetadata? GlobalSettingsAudit { get; set; }
-    public AuditMetadata? DeviceAudit { get; set; }
-    public AuditMetadata? DisplayAudit { get; set; }
-    public DateTime? DeviceUpdatedAtUtc { get; set; }
-    public DateTime? DisplayUpdatedAtUtc { get; set; }
-}
-
-public sealed class DeviceCommandEntry
-{
-    public string Id { get; set; } = "";
-    public string DeviceId { get; set; } = "";
-    public string Command { get; set; } = "";
-    public string Status { get; set; } = DeviceCommandStatuses.Pending;
-    public DateTime IssuedAtUtc { get; set; }
-    public DateTime? ExpiresAtUtc { get; set; }
-    public DateTime? AcknowledgedAtUtc { get; set; }
-    public DateTime? StartedAtUtc { get; set; }
-    public DateTime? CompletedAtUtc { get; set; }
-    public DateTime? LastHeartbeatAtUtc { get; set; }
-    public string? ResultMessage { get; set; }
-    public AuditMetadata? Audit { get; set; }
-    public JsonObject Details { get; set; } = new();
-}
-
-public static class DeviceCommandStatuses
-{
-    public const string Pending = "pending";
-    public const string Acknowledged = "acknowledged";
-    public const string Running = "running";
-    public const string Succeeded = "succeeded";
-    public const string Failed = "failed";
-    public const string Stale = "stale";
-}
-
-static class JsonUtil
-{
-    public static readonly JsonSerializerOptions Options = EmergencyCallUnifiedJson.Options;
-}
-
-static class ScopeCatalog
-{
-    public const string ClientsRead = "clients.read";
-    public const string ClientsWrite = "clients.write";
-    public const string DisplayRead = "display.read";
-    public const string DisplayWrite = "display.write";
-    public const string DeviceRead = "device-settings.read";
-    public const string DeviceWrite = "device-settings.write";
-    public const string GlobalRead = "global-settings.read";
-    public const string GlobalWrite = "global-settings.write";
-    public const string KioskCommands = "kiosk.commands";
-    public const string ServicePolling = "service.poll";
-    public const string ReportAccess = "report.access";
-    public const string Ingest = "call.ingest";
-
-    public static readonly HashSet<string> All = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ClientsRead,
-        ClientsWrite,
-        DisplayRead,
-        DisplayWrite,
-        DeviceRead,
-        DeviceWrite,
-        GlobalRead,
-        GlobalWrite,
-        KioskCommands,
-        ServicePolling,
-        ReportAccess,
-        Ingest
-    };
-
-    public static readonly string[] DefaultClientScopes =
-    {
-        Ingest,
-        DisplayRead,
-        DisplayWrite,
-        DeviceRead,
-        DeviceWrite,
-        GlobalRead,
-        GlobalWrite,
-        KioskCommands,
-        ServicePolling,
-        ReportAccess,
-        ClientsRead,
-        ClientsWrite
-    };
 }

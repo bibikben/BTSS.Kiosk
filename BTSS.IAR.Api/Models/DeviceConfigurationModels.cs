@@ -56,6 +56,7 @@ public sealed class DisplayRegistrationEntry
     public DateTime? UpdatedAtUtc { get; set; }
 }
 
+
 public sealed class DeviceResolvedConfiguration
 {
     public string ClientId { get; set; } = "";
@@ -88,7 +89,6 @@ public sealed class DeviceCommandEntry
     public AuditMetadata? Audit { get; set; }
     public JsonObject Details { get; set; } = new();
 }
-
 public static class DeviceCommandStatuses
 {
     public const string Pending = "pending";

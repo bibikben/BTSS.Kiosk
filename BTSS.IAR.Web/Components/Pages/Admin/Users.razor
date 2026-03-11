@@ -44,11 +44,11 @@
     protected override async Task OnInitializedAsync()
     {
         await ReloadAsync();
-        agencies = await Http.GetFromJsonAsync<List<AgencyAdminDto>>("/admin/agencies") ?? new();
-        roles = await Http.GetFromJsonAsync<List<RoleAdminDto>>("/admin/roles") ?? new();
+        agencies = await Http.GetFromJsonAsync<List<AgencyAdminDto>>("/api/admin/agencies") ?? new();
+        roles = await Http.GetFromJsonAsync<List<RoleAdminDto>>("/api/admin/roles") ?? new();
     }
 
-    private async Task ReloadAsync() => users = await Http.GetFromJsonAsync<List<UserAdminDto>>("/admin/users") ?? new();
+    private async Task ReloadAsync() => users = await Http.GetFromJsonAsync<List<UserAdminDto>>("/api/admin/users") ?? new();
     private void NewUser() { editing = new(); editingAgencyIds = Array.Empty<int>(); editingRoleIds = Array.Empty<int>(); }
     private void EditUser(UserAdminDto user)
     {

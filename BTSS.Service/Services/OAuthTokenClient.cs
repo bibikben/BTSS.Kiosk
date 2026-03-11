@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using BTSS.Service.Options;
@@ -8,10 +9,12 @@ namespace BTSS.Service.Services;
 public sealed class OAuthTokenClient(HttpClient httpClient, IOptions<ServiceRuntimeOptions> options, ILogger<OAuthTokenClient> logger)
 {
     private readonly ServiceRuntimeOptions _options = options.Value;
-    private string? _token;
-    private DateTimeOffset _expiresAtUtc = DateTimeOffset.MinValue;
+    private readonly ConcurrentDictionary<string, CachedToken> _cache = new(StringComparer.Ordinal);
 
-    public async Task<AuthenticationHeaderValue?> CreateHeaderAsync(CancellationToken cancellationToken)
+    public Task<AuthenticationHeaderValue?> CreateHeaderAsync(CancellationToken cancellationToken)
+        => CreateHeaderAsync(cancellationToken, null);
+
+    public async Task<AuthenticationHeaderValue?> CreateHeaderAsync(CancellationToken cancellationToken, string? scopeOverride)
     {
         if (string.IsNullOrWhiteSpace(_options.ClientId) ||
             string.IsNullOrWhiteSpace(_options.ClientSecret) ||
@@ -20,8 +23,9 @@ public sealed class OAuthTokenClient(HttpClient httpClient, IOptions<ServiceRunt
             return null;
         }
 
-        if (!string.IsNullOrWhiteSpace(_token) && _expiresAtUtc > DateTimeOffset.UtcNow.AddMinutes(1))
-            return new AuthenticationHeaderValue("Bearer", _token);
+        var effectiveScope = string.IsNullOrWhiteSpace(scopeOverride) ? _options.Scope : scopeOverride.Trim();
+        if (_cache.TryGetValue(effectiveScope, out var cached) && cached.ExpiresAtUtc > DateTimeOffset.UtcNow.AddMinutes(1))
+            return new AuthenticationHeaderValue("Bearer", cached.Token);
 
         using var request = new HttpRequestMessage(HttpMethod.Post, _options.OAuthTokenPath)
         {
@@ -30,7 +34,7 @@ public sealed class OAuthTokenClient(HttpClient httpClient, IOptions<ServiceRunt
                 ["grant_type"] = "client_credentials",
                 ["client_id"] = _options.ClientId,
                 ["client_secret"] = _options.ClientSecret,
-                ["scope"] = _options.Scope
+                ["scope"] = effectiveScope
             })
         };
 
@@ -43,7 +47,7 @@ public sealed class OAuthTokenClient(HttpClient httpClient, IOptions<ServiceRunt
                 "OAuth token request failed. Status={StatusCode}, ClientId={ClientId}, Scope={Scope}, TokenPath={TokenPath}, Response={ResponseBody}",
                 (int)response.StatusCode,
                 _options.ClientId,
-                _options.Scope,
+                effectiveScope,
                 _options.OAuthTokenPath,
                 body);
 
@@ -52,18 +56,21 @@ public sealed class OAuthTokenClient(HttpClient httpClient, IOptions<ServiceRunt
         }
 
         using var document = JsonDocument.Parse(body);
-        _token = document.RootElement.GetProperty("access_token").GetString();
+        var token = document.RootElement.GetProperty("access_token").GetString();
 
-        if (string.IsNullOrWhiteSpace(_token))
+        if (string.IsNullOrWhiteSpace(token))
             throw new InvalidOperationException("OAuth token response did not contain access_token.");
 
         var expiresIn = document.RootElement.TryGetProperty("expires_in", out var expiresEl)
             ? expiresEl.GetInt32()
             : 3600;
 
-        _expiresAtUtc = DateTimeOffset.UtcNow.AddSeconds(expiresIn);
+        var expiresAtUtc = DateTimeOffset.UtcNow.AddSeconds(expiresIn);
+        _cache[effectiveScope] = new CachedToken(token, expiresAtUtc);
 
-        logger.LogInformation("Acquired service access token expiring at {ExpiresAtUtc}.", _expiresAtUtc);
-        return new AuthenticationHeaderValue("Bearer", _token);
+        logger.LogInformation("Acquired service access token for scope {Scope} expiring at {ExpiresAtUtc}.", effectiveScope, expiresAtUtc);
+        return new AuthenticationHeaderValue("Bearer", token);
     }
+
+    private sealed record CachedToken(string Token, DateTimeOffset ExpiresAtUtc);
 }

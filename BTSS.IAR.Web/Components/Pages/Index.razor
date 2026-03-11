@@ -1,4 +1,5 @@
 @page "/"
+@inject BTSS.IAR.Web.Services.BrowserAuthClient AuthClient
 @inject HttpClient Http
 @inject NavigationManager Navigation
 
@@ -56,24 +57,36 @@ else
     private DashboardSummaryDto? summary;
     private int? selectedAgencyId;
 
-    protected override async Task OnInitializedAsync()
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        currentUser = await Http.GetFromJsonAsync<CurrentUserDto>("/auth/me");
-        selectedAgencyId = currentUser?.ActiveAgencyId;
-        summary = await Http.GetFromJsonAsync<DashboardSummaryDto>("/admin/dashboard");
+        if (!firstRender)
+            return;
+
+        currentUser = await AuthClient.GetCurrentUserAsync();
+        if (currentUser is null)
+        {
+            Navigation.NavigateTo("/login", true);
+            return;
+        }
+
+        selectedAgencyId = currentUser.ActiveAgencyId;
+        summary = await Http.GetFromJsonAsync<DashboardSummaryDto>("/api/admin/dashboard");
+        StateHasChanged();
     }
 
     private async Task OnAgencyChanged(object value)
     {
         if (value is int agencyId)
         {
-            var response = await Http.PostAsJsonAsync("/auth/switch-agency", new SwitchAgencyRequest(agencyId));
-            if (response.IsSuccessStatusCode)
+            currentUser = await AuthClient.SwitchAgencyAsync(agencyId);
+            if (currentUser is null)
             {
-                currentUser = await response.Content.ReadFromJsonAsync<CurrentUserDto>();
-                selectedAgencyId = currentUser?.ActiveAgencyId;
-                summary = await Http.GetFromJsonAsync<DashboardSummaryDto>("/admin/dashboard");
+                Navigation.NavigateTo("/login", true);
+                return;
             }
+
+            selectedAgencyId = currentUser.ActiveAgencyId;
+            summary = await Http.GetFromJsonAsync<DashboardSummaryDto>("/api/admin/dashboard");
         }
     }
 }

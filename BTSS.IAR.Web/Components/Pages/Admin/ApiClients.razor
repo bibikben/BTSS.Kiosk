@@ -111,7 +111,7 @@
     }
 
     private async Task ReloadAsync()
-        => clients = await Http.GetFromJsonAsync<List<ApiClientAdminDto>>("/admin/api-clients") ?? new();
+        => clients = await Http.GetFromJsonAsync<List<ApiClientAdminDto>>("/api/admin/api-clients") ?? new();
 
     private void NewClient()
     {

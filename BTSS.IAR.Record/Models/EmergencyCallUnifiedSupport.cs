@@ -13,6 +13,7 @@ public static class EmergencyCallUnifiedJson
     static EmergencyCallUnifiedJson()
     {
         Options.Converters.Add(new FlexibleDateTimeConverter());
+        Options.Converters.Add(new FlexibleStringConverter());
     }
 
     public static EmergencyCallUnified? Deserialize(string json)

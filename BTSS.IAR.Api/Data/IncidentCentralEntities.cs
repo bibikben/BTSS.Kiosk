@@ -18,6 +18,10 @@ public sealed class IncidentEntity
     public double? Longitude { get; set; }
     public string? Coordinates { get; set; }
     public string? Status { get; set; }
+    public string? Municipality { get; set; }
+    public string? TypeCode { get; set; }
+    public string? Subtype { get; set; }
+    public string? SubtypeCode { get; set; }
     public DateTime? DispatchedAtUtc { get; set; }
     public DateTime? ClosedAtUtc { get; set; }
     public string RawPayloadJson { get; set; } = "{}";
@@ -74,10 +78,15 @@ public sealed class IncidentUnitEntity
     public IncidentEntity? Incident { get; set; }
     public int? AgencyId { get; set; }
     public Agency? Agency { get; set; }
+    public int? UnitCatalogId { get; set; }
+    public UnitCatalogEntity? UnitCatalog { get; set; }
     public string UnitIdentifier { get; set; } = string.Empty;
     public string? Station { get; set; }
     public string? UnitType { get; set; }
+    public string? AgencyRaw { get; set; }
+    public string? StatusOriginal { get; set; }
     public string? CurrentStatus { get; set; }
+    public string? Comment { get; set; }
     public DateTime? CreatedAtUtc { get; set; }
     public DateTime? UpdatedAtUtc { get; set; }
 }
@@ -89,6 +98,8 @@ public sealed class UnitStatusEventEntity
     public IncidentEntity? Incident { get; set; }
     public int? AgencyId { get; set; }
     public Agency? Agency { get; set; }
+    public int? UnitCatalogId { get; set; }
+    public UnitCatalogEntity? UnitCatalog { get; set; }
     public string UnitIdentifier { get; set; } = string.Empty;
     public string? StatusCodeRaw { get; set; }
     public string? StatusCodeNormalized { get; set; }
@@ -105,6 +116,8 @@ public sealed class UnitTimelineFactEntity
     public IncidentEntity? Incident { get; set; }
     public int? AgencyId { get; set; }
     public Agency? Agency { get; set; }
+    public int? UnitCatalogId { get; set; }
+    public UnitCatalogEntity? UnitCatalog { get; set; }
     public string UnitIdentifier { get; set; } = string.Empty;
     public DateTime? DispatchedAtUtc { get; set; }
     public DateTime? EnrouteAtUtc { get; set; }

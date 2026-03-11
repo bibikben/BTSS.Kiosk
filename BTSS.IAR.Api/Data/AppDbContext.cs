@@ -39,6 +39,11 @@ public class AppDbContext : DbContext
     public DbSet<ReportDefinitionEntity> ReportDefinitions => Set<ReportDefinitionEntity>();
     public DbSet<ReportExecutionEntity> ReportExecutions => Set<ReportExecutionEntity>();
     public DbSet<ExportJobEntity> ExportJobs => Set<ExportJobEntity>();
+    public DbSet<DepartmentEntity> Departments => Set<DepartmentEntity>();
+    public DbSet<StationEntity> Stations => Set<StationEntity>();
+    public DbSet<UnitCatalogEntity> UnitCatalog => Set<UnitCatalogEntity>();
+    public DbSet<ApiClientDepartmentEntity> ApiClientDepartments => Set<ApiClientDepartmentEntity>();
+    public DbSet<IncidentCaseNumberEntity> IncidentCaseNumbers => Set<IncidentCaseNumberEntity>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -97,6 +102,54 @@ public class AppDbContext : DbContext
             .HasForeignKey(x => x.ApiClientId)
             .OnDelete(DeleteBehavior.Cascade);
         modelBuilder.Entity<Agency>().HasIndex(x => x.Code).IsUnique();
+        modelBuilder.Entity<DepartmentEntity>(entity =>
+        {
+            entity.ToTable("Departments");
+            entity.HasIndex(x => x.DepartmentCode).IsUnique();
+            entity.Property(x => x.DepartmentCode).HasMaxLength(4);
+            entity.Property(x => x.DepartmentName).HasMaxLength(256);
+            entity.Property(x => x.MainAddress).HasMaxLength(512);
+            entity.Property(x => x.City).HasMaxLength(128);
+            entity.Property(x => x.State).HasMaxLength(64);
+            entity.Property(x => x.PostalCode).HasMaxLength(32);
+        });
+        modelBuilder.Entity<StationEntity>(entity =>
+        {
+            entity.ToTable("Stations");
+            entity.HasIndex(x => new { x.DepartmentId, x.StationNumber }).IsUnique();
+            entity.Property(x => x.StationNumber).HasMaxLength(20);
+            entity.Property(x => x.StationCode).HasMaxLength(64);
+            entity.Property(x => x.Address).HasMaxLength(512);
+            entity.Property(x => x.City).HasMaxLength(128);
+            entity.Property(x => x.State).HasMaxLength(64);
+            entity.Property(x => x.PostalCode).HasMaxLength(32);
+            entity.HasOne(x => x.Department).WithMany().HasForeignKey(x => x.DepartmentId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<UnitCatalogEntity>(entity =>
+        {
+            entity.ToTable("Units");
+            entity.HasIndex(x => x.Code).IsUnique();
+            entity.Property(x => x.Code).HasMaxLength(30);
+            entity.Property(x => x.EquipmentName).HasMaxLength(128);
+            entity.HasOne(x => x.Department).WithMany().HasForeignKey(x => x.DepartmentId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.Station).WithMany().HasForeignKey(x => x.StationId).OnDelete(DeleteBehavior.SetNull);
+        });
+        modelBuilder.Entity<ApiClientDepartmentEntity>(entity =>
+        {
+            entity.ToTable("ApiClientDepartments");
+            entity.HasIndex(x => new { x.ApiClientId, x.DepartmentId }).IsUnique();
+            entity.HasOne(x => x.ApiClient).WithMany().HasForeignKey(x => x.ApiClientId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.Department).WithMany().HasForeignKey(x => x.DepartmentId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<IncidentCaseNumberEntity>(entity =>
+        {
+            entity.ToTable("IncidentCaseNumbers");
+            entity.HasIndex(x => new { x.IncidentId, x.CaseNumber }).IsUnique();
+            entity.Property(x => x.CaseNumber).HasMaxLength(30);
+            entity.Property(x => x.AgencyPrefix).HasMaxLength(8);
+            entity.Property(x => x.Source).HasMaxLength(30);
+            entity.HasOne(x => x.Incident).WithMany().HasForeignKey(x => x.IncidentId).OnDelete(DeleteBehavior.Cascade);
+        });
         modelBuilder.Entity<UserAccount>().HasIndex(x => x.NormalizedUserName).IsUnique();
         modelBuilder.Entity<RoleDefinition>().HasIndex(x => x.Name).IsUnique();
         modelBuilder.Entity<PermissionDefinition>().HasIndex(x => x.Code).IsUnique();
@@ -113,6 +166,10 @@ public class AppDbContext : DbContext
             entity.Property(x => x.Address).HasMaxLength(512);
             entity.Property(x => x.LocationName).HasMaxLength(256);
             entity.Property(x => x.Status).HasMaxLength(64);
+            entity.Property(x => x.Municipality).HasMaxLength(64);
+            entity.Property(x => x.TypeCode).HasMaxLength(64);
+            entity.Property(x => x.Subtype).HasMaxLength(256);
+            entity.Property(x => x.SubtypeCode).HasMaxLength(64);
             entity.Property(x => x.Coordinates).HasMaxLength(64);
             entity.Property(x => x.RawPayloadJson).HasColumnType("nvarchar(max)");
         });
@@ -142,7 +199,11 @@ public class AppDbContext : DbContext
             entity.Property(x => x.UnitIdentifier).HasMaxLength(128);
             entity.Property(x => x.Station).HasMaxLength(128);
             entity.Property(x => x.UnitType).HasMaxLength(128);
+            entity.Property(x => x.AgencyRaw).HasMaxLength(64);
+            entity.Property(x => x.StatusOriginal).HasMaxLength(8);
             entity.Property(x => x.CurrentStatus).HasMaxLength(64);
+            entity.Property(x => x.Comment).HasColumnType("nvarchar(max)");
+            entity.HasOne(x => x.UnitCatalog).WithMany().HasForeignKey(x => x.UnitCatalogId).OnDelete(DeleteBehavior.SetNull);
         });
         modelBuilder.Entity<UnitStatusEventEntity>(entity =>
         {
@@ -181,20 +242,43 @@ public class AppDbContext : DbContext
             entity.Property(x => x.MachineName).HasMaxLength(256);
             entity.Property(x => x.DeviceType).HasMaxLength(128);
         });
+
         modelBuilder.Entity<DeviceAgencyEntity>(entity =>
         {
             entity.HasIndex(x => new { x.DeviceRefId, x.AgencyId }).IsUnique();
+
+            entity.HasOne(x => x.Device)
+                .WithMany()
+                .HasForeignKey(x => x.DeviceRefId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            entity.HasOne(x => x.Agency)
+                .WithMany()
+                .HasForeignKey(x => x.AgencyId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
+
         modelBuilder.Entity<DeviceSettingEntity>(entity =>
         {
             entity.HasIndex(x => new { x.DeviceId, x.AgencyId }).IsUnique();
             entity.Property(x => x.DeviceId).HasMaxLength(128);
             entity.Property(x => x.SettingsJson).HasColumnType("nvarchar(max)");
+
+            entity.HasOne(x => x.Device)
+                .WithMany()
+                .HasForeignKey(x => x.DeviceRefId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
+
         modelBuilder.Entity<GlobalSettingEntity>(entity =>
         {
             entity.HasIndex(x => x.AgencyId).IsUnique();
             entity.Property(x => x.SettingsJson).HasColumnType("nvarchar(max)");
+
+            entity.HasOne(x => x.Agency)
+                .WithMany()
+                .HasForeignKey(x => x.AgencyId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<DeviceHeartbeatEntity>(entity =>
@@ -204,7 +288,13 @@ public class AppDbContext : DbContext
             entity.Property(x => x.Status).HasMaxLength(64);
             entity.Property(x => x.Message).HasColumnType("nvarchar(max)");
             entity.Property(x => x.PayloadJson).HasColumnType("nvarchar(max)");
+
+            entity.HasOne(x => x.Device)
+                .WithMany()
+                .HasForeignKey(x => x.DeviceRefId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
+
         modelBuilder.Entity<DeviceSyncStateEntity>(entity =>
         {
             entity.HasIndex(x => new { x.DeviceId, x.AgencyId }).IsUnique();
@@ -212,7 +302,13 @@ public class AppDbContext : DbContext
             entity.Property(x => x.LastBatchId).HasMaxLength(64);
             entity.Property(x => x.ConflictPolicy).HasMaxLength(64);
             entity.Property(x => x.StateJson).HasColumnType("nvarchar(max)");
+
+            entity.HasOne(x => x.Device)
+                .WithMany()
+                .HasForeignKey(x => x.DeviceRefId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
+
         modelBuilder.Entity<SyncBatchEntity>(entity =>
         {
             entity.HasIndex(x => x.BatchId).IsUnique();
@@ -222,6 +318,26 @@ public class AppDbContext : DbContext
             entity.Property(x => x.Direction).HasMaxLength(16);
             entity.Property(x => x.Status).HasMaxLength(32);
             entity.Property(x => x.Notes).HasColumnType("nvarchar(max)");
+
+            entity.HasOne(x => x.Device)
+                .WithMany()
+                .HasForeignKey(x => x.DeviceRefId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<SyncErrorEntity>(entity =>
+        {
+            entity.HasIndex(x => new { x.DeviceId, x.CreatedAtUtc });
+            entity.Property(x => x.DeviceId).HasMaxLength(128);
+            entity.Property(x => x.Scope).HasMaxLength(64);
+            entity.Property(x => x.ErrorCode).HasMaxLength(64);
+            entity.Property(x => x.Message).HasColumnType("nvarchar(max)");
+            entity.Property(x => x.PayloadJson).HasColumnType("nvarchar(max)");
+
+            entity.HasOne(x => x.Device)
+                .WithMany()
+                .HasForeignKey(x => x.DeviceRefId)
+                .OnDelete(DeleteBehavior.SetNull);
         });
         modelBuilder.Entity<SyncErrorEntity>(entity =>
         {
